@@ -1,4 +1,0 @@
-(executable
- (public_name CS3110Lab1)
- (name main)
- (libraries CS3110Lab1))

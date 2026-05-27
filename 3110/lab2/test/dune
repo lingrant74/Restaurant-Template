@@ -1,3 +1,0 @@
-(test
- (name test_lab_starter)
- (libraries ounit2 lab_starter))

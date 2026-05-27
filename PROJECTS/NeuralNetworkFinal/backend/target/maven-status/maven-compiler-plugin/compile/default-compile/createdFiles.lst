@@ -1,9 +1,0 @@
-nn/Main.class
-nn/MnistLoader$DataPoint.class
-nn/Layer.class
-nn/NeuralNetwork$DataPoint.class
-nn/APIServer$HealthHandler.class
-nn/NeuralNetwork.class
-nn/APIServer$PredictHandler.class
-nn/APIServer.class
-nn/MnistLoader.class

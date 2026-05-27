@@ -1,4 +1,0 @@
-(test
- (name test_a2)
- (libraries ounit2 a2)
- (deps (glob_files_rec ../data/*)))

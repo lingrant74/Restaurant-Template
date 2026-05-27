@@ -1,4 +1,0 @@
-(executable
- (public_name lab_starter)
- (name main)
- (libraries lab_starter))
