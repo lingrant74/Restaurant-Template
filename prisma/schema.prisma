@@ -1,0 +1,81 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Restaurant {
+  id          Int        @id @default(autoincrement())
+  name        String
+  slug        String     @unique
+  description String?
+  address     String?
+  phone       String?
+  themeColor  String     @default("#d62828")
+  menuItems   MenuItem[]
+  categories  MenuCategory[]
+  orders      Order[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model MenuCategory {
+  id           Int        @id @default(autoincrement())
+  name         String
+  sortOrder    Int        @default(0)
+  restaurantId Int
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  menuItems    MenuItem[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([restaurantId, name])
+}
+
+model MenuItem {
+  id           Int        @id @default(autoincrement())
+  name         String
+  description  String?
+  imageUrl     String?
+  category     String?
+  categoryId   Int?
+  menuCategory MenuCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  price        Decimal    @db.Decimal(10, 2)
+  isAvailable  Boolean    @default(true)
+  restaurantId Int
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  orderItems   OrderItem[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+model Order {
+  id            Int         @id @default(autoincrement())
+  customerName  String
+  customerPhone String
+  customerEmail String?
+  notes         String?
+  status        String      @default("PENDING")
+  total         Decimal     @db.Decimal(10, 2)
+  restaurantId  Int
+  restaurant    Restaurant  @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  items         OrderItem[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model OrderItem {
+  id         Int      @id @default(autoincrement())
+  name       String
+  price      Decimal  @db.Decimal(10, 2)
+  quantity   Int
+  orderId    Int
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItemId Int?
+  menuItem   MenuItem? @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
