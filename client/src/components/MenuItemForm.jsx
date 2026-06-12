@@ -1,6 +1,6 @@
 import { emptyMenuItemForm } from "../utils.js";
 
-export default function MenuItemForm({ value = emptyMenuItemForm, onChange, onSubmit, buttonLabel = "Add Item" }) {
+export default function MenuItemForm({ value = emptyMenuItemForm, modifierGroups = [], onChange, onSubmit, buttonLabel = "Add Item" }) {
   return (
     <form className="editor-panel" onSubmit={onSubmit}>
       <div className="panel-heading">
@@ -32,6 +32,24 @@ export default function MenuItemForm({ value = emptyMenuItemForm, onChange, onSu
         <input name="isAvailable" type="checkbox" checked={Boolean(value.isAvailable)} onChange={onChange} />
         Available
       </label>
+
+      {modifierGroups.length > 0 && (
+        <fieldset className="modifier-checkboxes">
+          <legend>Modifier Groups</legend>
+          {modifierGroups.map((group) => (
+            <label className="checkbox-row" key={group.id}>
+              <input
+                name="modifierGroupIds"
+                type="checkbox"
+                value={group.id}
+                checked={(value.modifierGroupIds || []).includes(group.id)}
+                onChange={onChange}
+              />
+              {group.name}
+            </label>
+          ))}
+        </fieldset>
+      )}
 
       <button type="submit">{buttonLabel}</button>
     </form>

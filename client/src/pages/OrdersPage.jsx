@@ -5,7 +5,7 @@ import AdminHeader from "../components/AdminHeader.jsx";
 import AdminStatus from "../components/AdminStatus.jsx";
 import { formatPrice } from "../utils.js";
 
-const orderStatuses = ["PENDING", "ACCEPTED", "READY", "COMPLETED", "CANCELLED"];
+const orderStatuses = ["PENDING", "ACCEPTED", "COMPLETED", "CANCELLED"];
 
 export default function OrdersPage() {
   const { restaurantId } = useParams();
@@ -105,8 +105,22 @@ export default function OrdersPage() {
                 <div className="order-items">
                   {order.items.map((item) => (
                     <div className="order-item-row" key={item.id}>
-                      <span>{item.quantity} x {item.name}</span>
-                      <strong>{formatPrice(Number(item.price) * item.quantity)}</strong>
+                      <div>
+                        <span>{item.quantity} x {item.name}</span>
+                        {(item.selectedModifiers || []).length > 0 && (
+                          <ul className="cart-modifiers">
+                            {item.selectedModifiers.map((modifier) => (
+                              <li key={`${item.id}-${modifier.groupId}-${modifier.optionId}`}>
+                                {modifier.groupName}: {modifier.optionName} +{formatPrice(modifier.priceDelta)}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {item.customerComment && (
+                          <p className="order-item-comment">Comment: {item.customerComment}</p>
+                        )}
+                      </div>
+                      <strong>{formatPrice(Number(item.finalPrice || item.price) * item.quantity)}</strong>
                     </div>
                   ))}
                 </div>

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { createOrder, getPublicRestaurant } from "../api.js";
-import { formatPrice, groupMenuItems } from "../utils.js";
+import { createAnchorId, formatPrice, getItemModifierGroups, getJapaneseCategoryLabel, groupMenuItems } from "../utils.js";
 
 export default function PublicRestaurantPage() {
   const { slug } = useParams();
@@ -18,6 +18,9 @@ export default function PublicRestaurantPage() {
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
+  const [customizingItem, setCustomizingItem] = useState(null);
+  const [modifierSelections, setModifierSelections] = useState({});
+  const [modifierError, setModifierError] = useState("");
 
   useEffect(() => {
     async function loadRestaurant() {
@@ -50,23 +53,152 @@ export default function PublicRestaurantPage() {
     return groupMenuItems(restaurant.menuItems || []);
   }, [restaurant]);
 
+  const visibleCategories = useMemo(() => {
+    if (!restaurant) {
+      return [];
+    }
+
+    const categoriesWithItems = new Set(Object.keys(groupedMenuItems));
+    const sortedCategories = (restaurant.categories || [])
+      .filter((category) => categoriesWithItems.has(category.name))
+      .sort((firstCategory, secondCategory) => firstCategory.sortOrder - secondCategory.sortOrder)
+      .map((category) => ({
+        key: category.name,
+        label: getJapaneseCategoryLabel(category.name)
+      }));
+    const sortedCategoryKeys = sortedCategories.map((category) => category.key);
+    const uncategorizedNames = Object.keys(groupedMenuItems)
+      .filter((categoryName) => !sortedCategoryKeys.includes(categoryName))
+      .map((categoryName) => ({
+        key: categoryName,
+        label: getJapaneseCategoryLabel(categoryName)
+      }));
+
+    return [...sortedCategories, ...uncategorizedNames];
+  }, [restaurant, groupedMenuItems]);
+
   const cartItemsList = Object.values(cartItems);
   const cartSubtotal = cartItemsList.reduce((total, item) => total + Number(item.price) * item.quantity, 0);
 
   function addToCart(item) {
+    const modifierGroups = getItemModifierGroups(item);
+
+    if (modifierGroups.length > 0) {
+      setCustomizingItem(item);
+      setModifierSelections({});
+      setModifierError("");
+      return;
+    }
+
+    addCartLine(item, [], Number(item.price));
+  }
+
+  function addCartLine(item, selectedModifiers, finalPrice) {
+    const optionKey = selectedModifiers.map((modifier) => modifier.optionId).sort((a, b) => a - b).join("-");
+    const cartKey = `${item.id}:${optionKey || "plain"}`;
+
     setCartItems((currentCart) => {
-      const existingItem = currentCart[item.id];
+      const existingItem = currentCart[cartKey];
 
       return {
         ...currentCart,
-        [item.id]: {
-          id: item.id,
+        [cartKey]: {
+          id: cartKey,
+          menuItemId: item.id,
           name: item.name,
-          price: item.price,
+          basePrice: item.price,
+          price: finalPrice.toFixed(2),
+          selectedModifiers,
+          customerComment: existingItem?.customerComment || "",
           quantity: existingItem ? existingItem.quantity + 1 : 1
         }
       };
     });
+  }
+
+  function updateCartItemComment(itemId, customerComment) {
+    setCartItems((currentCart) => ({
+      ...currentCart,
+      [itemId]: {
+        ...currentCart[itemId],
+        customerComment
+      }
+    }));
+  }
+
+  function getSelectedModifierSnapshots(item, shouldValidate = false) {
+    const modifierGroups = getItemModifierGroups(item);
+    const snapshots = [];
+
+    for (const group of modifierGroups) {
+      const selectedOptionIds = modifierSelections[group.id] || [];
+      const requiredMinimum = group.required ? Math.max(group.minSelections || 0, 1) : group.minSelections || 0;
+
+      if (shouldValidate && selectedOptionIds.length < requiredMinimum) {
+        throw new Error(`${group.name} requires at least ${requiredMinimum} selection${requiredMinimum === 1 ? "" : "s"}.`);
+      }
+
+      if (shouldValidate && !group.allowMultiple && selectedOptionIds.length > 1) {
+        throw new Error(`${group.name} only allows one selection.`);
+      }
+
+      if (shouldValidate && group.maxSelections !== null && selectedOptionIds.length > group.maxSelections) {
+        throw new Error(`${group.name} allows at most ${group.maxSelections} selection${group.maxSelections === 1 ? "" : "s"}.`);
+      }
+
+      for (const optionId of selectedOptionIds) {
+        const option = (group.options || []).find((currentOption) => currentOption.id === optionId);
+
+        if (option) {
+          snapshots.push({
+            groupId: group.id,
+            groupName: group.name,
+            optionId: option.id,
+            optionName: option.name,
+            priceDelta: Number(option.priceDelta).toFixed(2)
+          });
+        }
+      }
+    }
+
+    return snapshots;
+  }
+
+  function updateModifierSelection(group, optionId, checked) {
+    setModifierSelections((currentSelections) => {
+      if (!group.allowMultiple) {
+        return {
+          ...currentSelections,
+          [group.id]: [optionId]
+        };
+      }
+
+      const currentGroupSelections = currentSelections[group.id] || [];
+
+      return {
+        ...currentSelections,
+        [group.id]: checked
+          ? [...currentGroupSelections, optionId]
+          : currentGroupSelections.filter((id) => id !== optionId)
+      };
+    });
+  }
+
+  function addCustomizedItemToCart() {
+    try {
+      const selectedModifiers = getSelectedModifierSnapshots(customizingItem, true);
+      const finalPrice = selectedModifiers.reduce(
+        (total, modifier) => total + Number(modifier.priceDelta),
+        Number(customizingItem.price)
+      );
+
+      addCartLine(customizingItem, selectedModifiers, finalPrice);
+      setCustomizingItem(null);
+      setModifierSelections({});
+      setModifierError("");
+    } catch (err) {
+      setModifierError(err.message);
+    }
   }
 
   function updateCartQuantity(itemId, change) {
@@ -131,8 +263,10 @@ export default function PublicRestaurantPage() {
       const order = await createOrder(restaurant.id, {
         ...customerForm,
         items: cartItemsList.map((item) => ({
-          menuItemId: item.id,
-          quantity: item.quantity
+          menuItemId: item.menuItemId,
+          quantity: item.quantity,
+          customerComment: item.customerComment,
+          selectedModifiers: item.selectedModifiers
         }))
       });
 
@@ -191,21 +325,36 @@ export default function PublicRestaurantPage() {
       </section>
 
       <section className="menu-section">
-        <div className="section-heading">
-          <p className="eyebrow">Menu</p>
-          <h2>Available Items</h2>
+        <div className="section-heading japanese-menu-heading">
+          <div>
+            <p className="eyebrow">Japanese Menu</p>
+            <h2>Available Items</h2>
+          </div>
         </div>
 
-        <div className="menu-and-cart">
-          <div>
+        <div className="public-menu-layout">
+          <aside className="category-sidebar">
+            <p className="eyebrow">Categories</p>
+            <nav>
+              {visibleCategories.map((category) => (
+                <a href={`#${createAnchorId(category.key)}`} key={category.key}>
+                  <span className="category-nav-icon" aria-hidden="true" />
+                  {category.label}
+                </a>
+              ))}
+            </nav>
+          </aside>
+
+          <div className="menu-and-cart">
+            <div>
             {restaurant.menuItems.length === 0 ? (
               <p className="empty-message">No available menu items yet.</p>
             ) : (
-              Object.entries(groupedMenuItems).map(([category, items]) => (
-                <div className="category-group" key={category}>
-                  <h3>{category}</h3>
+              visibleCategories.map((category) => (
+                <div className="category-group" id={createAnchorId(category.key)} key={category.key}>
+                  <h3>{category.label}</h3>
                   <div className="menu-grid">
-                    {items.map((item) => (
+                    {groupedMenuItems[category.key].map((item) => (
                       <article className="menu-item" key={item.id}>
                         <div>
                           <h4>{item.name}</h4>
@@ -223,9 +372,9 @@ export default function PublicRestaurantPage() {
                 </div>
               ))
             )}
-          </div>
+            </div>
 
-          <aside className="cart-panel">
+            <aside className="cart-panel">
             <div className="cart-heading">
               <p className="eyebrow">Cart</p>
               <h3>Your Order</h3>
@@ -240,6 +389,24 @@ export default function PublicRestaurantPage() {
                     <div>
                       <h4>{item.name}</h4>
                       <p>{formatPrice(item.price)} each</p>
+                      {item.selectedModifiers.length > 0 && (
+                        <ul className="cart-modifiers">
+                          {item.selectedModifiers.map((modifier) => (
+                            <li key={`${modifier.groupId}-${modifier.optionId}`}>
+                              {modifier.groupName}: {modifier.optionName} +{formatPrice(modifier.priceDelta)}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <label className="cart-item-comment">
+                        Item comment
+                        <textarea
+                          rows="2"
+                          value={item.customerComment}
+                          onChange={(event) => updateCartItemComment(item.id, event.target.value)}
+                          placeholder="No scallions, extra spicy, sauce on the side..."
+                        />
+                      </label>
                     </div>
 
                     <div className="quantity-controls">
@@ -298,9 +465,80 @@ export default function PublicRestaurantPage() {
                 {isSubmittingOrder ? "Placing Order..." : "Place Order"}
               </button>
             </form>
-          </aside>
+            </aside>
+          </div>
         </div>
       </section>
+
+      {customizingItem && (
+        <ModifierModal
+          item={customizingItem}
+          modifierSelections={modifierSelections}
+          modifierError={modifierError}
+          onSelect={updateModifierSelection}
+          onClose={() => setCustomizingItem(null)}
+          onAdd={addCustomizedItemToCart}
+          previewModifiers={getSelectedModifierSnapshots(customizingItem)}
+        />
+      )}
     </main>
+  );
+}
+
+function ModifierModal({ item, modifierSelections, modifierError, previewModifiers, onSelect, onClose, onAdd }) {
+  const modifierGroups = getItemModifierGroups(item);
+  const finalPrice = previewModifiers.reduce((total, modifier) => total + Number(modifier.priceDelta), Number(item.price));
+
+  return (
+    <div className="modal-backdrop">
+      <section className="modifier-modal">
+        <div className="modal-heading">
+          <div>
+            <p className="eyebrow">Customize</p>
+            <h2>{item.name}</h2>
+            <p>Base price {formatPrice(item.price)}</p>
+          </div>
+          <button type="button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+
+        {modifierGroups.map((group) => (
+          <fieldset className="public-modifier-group" key={group.id}>
+            <legend>
+              {group.name}
+              {group.required && " (required)"}
+            </legend>
+
+            {(group.options || []).map((option) => {
+              const inputType = group.allowMultiple ? "checkbox" : "radio";
+              const selectedOptionIds = modifierSelections[group.id] || [];
+
+              return (
+                <label className="modifier-option-choice" key={option.id}>
+                  <input
+                    type={inputType}
+                    name={`modifier-${group.id}`}
+                    checked={selectedOptionIds.includes(option.id)}
+                    onChange={(event) => onSelect(group, option.id, event.target.checked)}
+                  />
+                  <span>{option.name}</span>
+                  <strong>+{formatPrice(option.priceDelta)}</strong>
+                </label>
+              );
+            })}
+          </fieldset>
+        ))}
+
+        {modifierError && <div className="order-message order-message-error">{modifierError}</div>}
+
+        <div className="modifier-modal-footer">
+          <strong>Total {formatPrice(finalPrice)}</strong>
+          <button type="button" onClick={onAdd}>
+            Add to cart
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }

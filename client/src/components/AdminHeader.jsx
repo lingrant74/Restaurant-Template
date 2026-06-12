@@ -1,6 +1,9 @@
 import { Link } from "react-router-dom";
+import { useAuth } from "../auth.jsx";
 
 export default function AdminHeader({ title, eyebrow = "Admin", children }) {
+  const { currentUser, logout } = useAuth();
+
   return (
     <header className="admin-header">
       <div>
@@ -11,6 +14,11 @@ export default function AdminHeader({ title, eyebrow = "Admin", children }) {
         <Link to="/admin">Restaurants</Link>
         <a href="/joes-pizza">Public page</a>
         {children}
+        {currentUser && (
+          <button className="admin-logout-button" type="button" onClick={logout}>
+            Logout
+          </button>
+        )}
       </nav>
     </header>
   );

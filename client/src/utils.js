@@ -17,7 +17,8 @@ export const emptyMenuItemForm = {
   description: "",
   imageUrl: "",
   price: "",
-  isAvailable: true
+  isAvailable: true,
+  modifierGroupIds: []
 };
 
 export function createSlug(name) {
@@ -26,6 +27,21 @@ export function createSlug(name) {
     .trim()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
+}
+
+export function createAnchorId(value) {
+  return `category-${createSlug(value || "menu")}`;
+}
+
+const japaneseCategoryAliases = {
+  Entrees: "Hibachi Dinner",
+  Drinks: "Beverages",
+  Sides: "Side Order",
+  Specials: "Special Roll"
+};
+
+export function getJapaneseCategoryLabel(categoryName) {
+  return japaneseCategoryAliases[categoryName] || categoryName;
 }
 
 export function formatPrice(price) {
@@ -46,4 +62,17 @@ export function groupMenuItems(menuItems) {
     groups[categoryName].push(item);
     return groups;
   }, {});
+}
+
+export function getItemModifierGroups(item) {
+  return (item.modifierGroupLinks || [])
+    .map((link) => link.modifierGroup)
+    .filter(Boolean)
+    .sort((firstGroup, secondGroup) => {
+      if (firstGroup.sort !== secondGroup.sort) {
+        return firstGroup.sort - secondGroup.sort;
+      }
+
+      return firstGroup.name.localeCompare(secondGroup.name);
+    });
 }

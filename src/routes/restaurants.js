@@ -1,10 +1,27 @@
 const express = require("express");
 const prisma = require("../prismaClient");
+const { requireOrderAccess, requirePlatformAdmin, requireRestaurantAccess } = require("../auth");
 
 const router = express.Router();
 
-const defaultCategoryNames = ["Appetizers", "Entrees", "Drinks", "Desserts", "Sides", "Specials"];
-const orderStatuses = ["PENDING", "ACCEPTED", "READY", "COMPLETED", "CANCELLED"];
+const defaultCategoryNames = [
+  "Appetizers",
+  "Soup & Salads",
+  "Yaki Soba",
+  "Appetizers From Sushi Bar",
+  "Hibachi Dinner",
+  "Bento Dinner",
+  "Regular Roll",
+  "Special Roll",
+  "Sushi / Sashimi",
+  "Sushi & Sashimi Entree",
+  "Side Order",
+  "Beverages",
+  "Desserts",
+  "Side Sauce"
+];
+const orderStatuses = ["PENDING", "ACCEPTED", "COMPLETED", "CANCELLED"];
+const restaurantUserStatuses = ["PENDING", "APPROVED", "REJECTED"];
 
 function createDefaultCategories() {
   return defaultCategoryNames.map((name, index) => ({
@@ -29,9 +46,150 @@ function sendOrder(res, statusCode, order) {
   });
 }
 
+function orderInclude() {
+  return {
+    items: {
+      orderBy: {
+        id: "asc"
+      }
+    }
+  };
+}
+
+function modifierGroupInclude() {
+  return {
+    options: {
+      orderBy: [
+        {
+          sort: "asc"
+        },
+        {
+          name: "asc"
+        }
+      ]
+    }
+  };
+}
+
+function publicMenuItemInclude() {
+  return {
+    menuCategory: true,
+    modifierGroupLinks: {
+      include: {
+        modifierGroup: {
+          include: {
+            options: {
+              where: {
+                available: true
+              },
+              orderBy: [
+                {
+                  sort: "asc"
+                },
+                {
+                  name: "asc"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  };
+}
+
+function normalizeModifierSelections(selectedModifiers = []) {
+  if (!Array.isArray(selectedModifiers)) {
+    return [];
+  }
+
+  return selectedModifiers
+    .map((selection) => ({
+      groupId: Number(selection.groupId),
+      optionId: Number(selection.optionId)
+    }))
+    .filter((selection) => Number.isInteger(selection.groupId) && Number.isInteger(selection.optionId));
+}
+
+function buildOrderItemSnapshot(menuItem, orderItem) {
+  const selectedModifiers = normalizeModifierSelections(orderItem.selectedModifiers);
+  const selectedOptionKeys = new Set();
+  const selectedGroupIds = new Set(selectedModifiers.map((selection) => selection.groupId));
+  const allowedGroupIds = new Set(menuItem.modifierGroupLinks.map((link) => link.modifierGroupId));
+  const modifierSnapshots = [];
+  let modifierTotal = 0;
+
+  for (const groupId of selectedGroupIds) {
+    if (!allowedGroupIds.has(groupId)) {
+      throw new Error("Order includes modifiers that do not belong to this menu item");
+    }
+  }
+
+  for (const link of menuItem.modifierGroupLinks) {
+    const group = link.modifierGroup;
+    const groupSelections = selectedModifiers.filter((selection) => selection.groupId === group.id);
+    const requiredMinimum = group.required ? Math.max(group.minSelections, 1) : group.minSelections;
+
+    if (groupSelections.length < requiredMinimum) {
+      throw new Error(`${group.name} requires at least ${requiredMinimum} selection${requiredMinimum === 1 ? "" : "s"}`);
+    }
+
+    if (!group.allowMultiple && groupSelections.length > 1) {
+      throw new Error(`${group.name} only allows one selection`);
+    }
+
+    if (group.maxSelections !== null && groupSelections.length > group.maxSelections) {
+      throw new Error(`${group.name} allows at most ${group.maxSelections} selection${group.maxSelections === 1 ? "" : "s"}`);
+    }
+
+    const optionsById = new Map(group.options.map((option) => [option.id, option]));
+
+    for (const selection of groupSelections) {
+      const selectionKey = `${selection.groupId}:${selection.optionId}`;
+
+      if (selectedOptionKeys.has(selectionKey)) {
+        throw new Error("Order includes the same modifier option more than once");
+      }
+
+      selectedOptionKeys.add(selectionKey);
+
+      const option = optionsById.get(selection.optionId);
+
+      if (!option || !option.available) {
+        throw new Error("Order includes an unavailable modifier option");
+      }
+
+      const priceDelta = Number(option.priceDelta);
+      modifierTotal += priceDelta;
+
+      modifierSnapshots.push({
+        groupId: group.id,
+        groupName: group.name,
+        optionId: option.id,
+        optionName: option.name,
+        priceDelta: priceDelta.toFixed(2)
+      });
+    }
+  }
+
+  const basePrice = Number(menuItem.price);
+  const finalPrice = basePrice + modifierTotal;
+
+  return {
+    menuItemId: menuItem.id,
+    name: menuItem.name,
+    price: finalPrice.toFixed(2),
+    basePrice: basePrice.toFixed(2),
+    finalPrice: finalPrice.toFixed(2),
+    customerComment: orderItem.customerComment || null,
+    selectedModifiers: modifierSnapshots,
+    quantity: Number(orderItem.quantity)
+  };
+}
+
 // POST /restaurants
 // Creates a restaurant. The slug is public and should be URL-friendly, like "pasta-house".
-router.post("/restaurants", async (req, res, next) => {
+router.post("/restaurants", requirePlatformAdmin, async (req, res, next) => {
   try {
     const { name, slug, description, address, phone, themeColor } = req.body;
 
@@ -76,7 +234,7 @@ router.post("/restaurants", async (req, res, next) => {
 
 // GET /restaurants
 // Lists restaurants with a simple menu item count.
-router.get("/restaurants", async (req, res, next) => {
+router.get("/restaurants", requirePlatformAdmin, async (req, res, next) => {
   try {
     const restaurants = await prisma.restaurant.findMany({
       orderBy: {
@@ -112,7 +270,7 @@ router.get("/restaurants", async (req, res, next) => {
 
 // GET /restaurants/:id
 // Returns one restaurant with categories and menu items for the admin pages.
-router.get("/restaurants/:id", async (req, res, next) => {
+router.get("/restaurants/:id", requirePlatformAdmin, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
 
@@ -157,7 +315,7 @@ router.get("/restaurants/:id", async (req, res, next) => {
 
 // POST /restaurants/:restaurantId/menu-items
 // Adds one menu item to a restaurant.
-router.post("/restaurants/:restaurantId/menu-items", async (req, res, next) => {
+router.post("/restaurants/:restaurantId/menu-items", requirePlatformAdmin, async (req, res, next) => {
   try {
     const restaurantId = Number(req.params.restaurantId);
     const { name, description, imageUrl, category, categoryId, price, isAvailable } = req.body;
@@ -227,7 +385,7 @@ router.post("/restaurants/:restaurantId/menu-items", async (req, res, next) => {
 
 // POST /restaurants/:restaurantId/categories
 // Adds a category to one restaurant.
-router.post("/restaurants/:restaurantId/categories", async (req, res, next) => {
+router.post("/restaurants/:restaurantId/categories", requirePlatformAdmin, async (req, res, next) => {
   try {
     const restaurantId = Number(req.params.restaurantId);
     const { name, sortOrder } = req.body;
@@ -260,6 +418,562 @@ router.post("/restaurants/:restaurantId/categories", async (req, res, next) => {
       });
     }
 
+    next(err);
+  }
+});
+
+// GET /api/restaurants/:restaurantId/users
+// Lets platform admins view staff/tablet accounts assigned to one restaurant.
+router.get("/api/restaurants/:restaurantId/users", requirePlatformAdmin, async (req, res, next) => {
+  try {
+    const restaurantId = Number(req.params.restaurantId);
+
+    if (!Number.isInteger(restaurantId)) {
+      return res.status(400).json({
+        error: "Restaurant id must be a number"
+      });
+    }
+
+    const users = await prisma.restaurantUser.findMany({
+      where: {
+        restaurantId
+      },
+      orderBy: [
+        {
+          createdAt: "desc"
+        }
+      ]
+    });
+
+    res.json(users);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/restaurants/:restaurantId/users
+// Creates or invites a restaurant tablet user for an existing restaurant.
+router.post("/api/restaurants/:restaurantId/users", requirePlatformAdmin, async (req, res, next) => {
+  try {
+    const restaurantId = Number(req.params.restaurantId);
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const { name, role, status } = req.body;
+    const selectedStatus = status ? String(status).toUpperCase() : "PENDING";
+
+    if (!Number.isInteger(restaurantId)) {
+      return res.status(400).json({
+        error: "Restaurant id must be a number"
+      });
+    }
+
+    if (!email) {
+      return res.status(400).json({
+        error: "Email is required"
+      });
+    }
+
+    if (!restaurantUserStatuses.includes(selectedStatus)) {
+      return res.status(400).json({
+        error: "Status must be PENDING, APPROVED, or REJECTED"
+      });
+    }
+
+    const restaurant = await prisma.restaurant.findUnique({
+      where: {
+        id: restaurantId
+      }
+    });
+
+    if (!restaurant) {
+      return res.status(404).json({
+        error: "Restaurant not found"
+      });
+    }
+
+    const user = await prisma.restaurantUser.create({
+      data: {
+        restaurantId,
+        email,
+        name,
+        role: role || "STAFF",
+        status: selectedStatus
+      }
+    });
+
+    res.status(201).json(user);
+  } catch (err) {
+    if (err.code === "P2002") {
+      return res.status(409).json({
+        error: "That email is already assigned to a restaurant"
+      });
+    }
+
+    next(err);
+  }
+});
+
+// PATCH /api/restaurant-users/:userId
+// Updates approval status or basic details for one restaurant user.
+router.patch("/api/restaurant-users/:userId", requirePlatformAdmin, async (req, res, next) => {
+  try {
+    const userId = Number(req.params.userId);
+    const { name, role, status } = req.body;
+    const selectedStatus = status ? String(status).toUpperCase() : undefined;
+
+    if (!Number.isInteger(userId)) {
+      return res.status(400).json({
+        error: "Restaurant user id must be a number"
+      });
+    }
+
+    if (selectedStatus && !restaurantUserStatuses.includes(selectedStatus)) {
+      return res.status(400).json({
+        error: "Status must be PENDING, APPROVED, or REJECTED"
+      });
+    }
+
+    const user = await prisma.restaurantUser.update({
+      where: {
+        id: userId
+      },
+      data: {
+        name,
+        role,
+        status: selectedStatus
+      }
+    });
+
+    res.json(user);
+  } catch (err) {
+    if (err.code === "P2025") {
+      return res.status(404).json({
+        error: "Restaurant user not found"
+      });
+    }
+
+    next(err);
+  }
+});
+
+// DELETE /api/restaurant-users/:userId
+// Removes one restaurant tablet user.
+router.delete("/api/restaurant-users/:userId", requirePlatformAdmin, async (req, res, next) => {
+  try {
+    const userId = Number(req.params.userId);
+
+    if (!Number.isInteger(userId)) {
+      return res.status(400).json({
+        error: "Restaurant user id must be a number"
+      });
+    }
+
+    const user = await prisma.restaurantUser.delete({
+      where: {
+        id: userId
+      }
+    });
+
+    res.json({
+      message: "Restaurant user removed",
+      user
+    });
+  } catch (err) {
+    if (err.code === "P2025") {
+      return res.status(404).json({
+        error: "Restaurant user not found"
+      });
+    }
+
+    next(err);
+  }
+});
+
+// GET /api/restaurants/:restaurantId/modifier-groups
+// Lists all modifier groups and options for one restaurant.
+router.get("/api/restaurants/:restaurantId/modifier-groups", requirePlatformAdmin, async (req, res, next) => {
+  try {
+    const restaurantId = Number(req.params.restaurantId);
+
+    if (!Number.isInteger(restaurantId)) {
+      return res.status(400).json({
+        error: "Restaurant id must be a number"
+      });
+    }
+
+    const modifierGroups = await prisma.modifierGroup.findMany({
+      where: {
+        restaurantId
+      },
+      include: modifierGroupInclude(),
+      orderBy: [
+        {
+          sort: "asc"
+        },
+        {
+          name: "asc"
+        }
+      ]
+    });
+
+    res.json(modifierGroups);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/restaurants/:restaurantId/modifier-groups
+// Creates one modifier group for a restaurant.
+router.post("/api/restaurants/:restaurantId/modifier-groups", requirePlatformAdmin, async (req, res, next) => {
+  try {
+    const restaurantId = Number(req.params.restaurantId);
+    const { name, required, allowMultiple, minSelections, maxSelections, sort } = req.body;
+
+    if (!Number.isInteger(restaurantId)) {
+      return res.status(400).json({
+        error: "Restaurant id must be a number"
+      });
+    }
+
+    if (!name) {
+      return res.status(400).json({
+        error: "Modifier group name is required"
+      });
+    }
+
+    const modifierGroup = await prisma.modifierGroup.create({
+      data: {
+        restaurantId,
+        name,
+        required: Boolean(required),
+        allowMultiple: Boolean(allowMultiple),
+        minSelections: minSelections === undefined || minSelections === "" ? 0 : Number(minSelections),
+        maxSelections: maxSelections === undefined || maxSelections === "" ? null : Number(maxSelections),
+        sort: sort === undefined || sort === "" ? 0 : Number(sort)
+      },
+      include: modifierGroupInclude()
+    });
+
+    res.status(201).json(modifierGroup);
+  } catch (err) {
+    if (err.code === "P2002") {
+      return res.status(409).json({
+        error: "That modifier group already exists for this restaurant"
+      });
+    }
+
+    next(err);
+  }
+});
+
+// PATCH /api/modifier-groups/:groupId
+// Updates one modifier group.
+router.patch("/api/modifier-groups/:groupId", requirePlatformAdmin, async (req, res, next) => {
+  try {
+    const groupId = Number(req.params.groupId);
+    const { name, required, allowMultiple, minSelections, maxSelections, sort } = req.body;
+
+    if (!Number.isInteger(groupId)) {
+      return res.status(400).json({
+        error: "Modifier group id must be a number"
+      });
+    }
+
+    if (!name) {
+      return res.status(400).json({
+        error: "Modifier group name is required"
+      });
+    }
+
+    const modifierGroup = await prisma.modifierGroup.update({
+      where: {
+        id: groupId
+      },
+      data: {
+        name,
+        required: Boolean(required),
+        allowMultiple: Boolean(allowMultiple),
+        minSelections: minSelections === undefined || minSelections === "" ? 0 : Number(minSelections),
+        maxSelections: maxSelections === undefined || maxSelections === "" ? null : Number(maxSelections),
+        sort: sort === undefined || sort === "" ? 0 : Number(sort)
+      },
+      include: modifierGroupInclude()
+    });
+
+    res.json(modifierGroup);
+  } catch (err) {
+    if (err.code === "P2025") {
+      return res.status(404).json({
+        error: "Modifier group not found"
+      });
+    }
+
+    if (err.code === "P2002") {
+      return res.status(409).json({
+        error: "That modifier group already exists for this restaurant"
+      });
+    }
+
+    next(err);
+  }
+});
+
+// DELETE /api/modifier-groups/:groupId
+// Deletes one modifier group and its options/assignments.
+router.delete("/api/modifier-groups/:groupId", requirePlatformAdmin, async (req, res, next) => {
+  try {
+    const groupId = Number(req.params.groupId);
+
+    if (!Number.isInteger(groupId)) {
+      return res.status(400).json({
+        error: "Modifier group id must be a number"
+      });
+    }
+
+    const modifierGroup = await prisma.modifierGroup.delete({
+      where: {
+        id: groupId
+      }
+    });
+
+    res.json({
+      message: "Modifier group deleted",
+      modifierGroup
+    });
+  } catch (err) {
+    if (err.code === "P2025") {
+      return res.status(404).json({
+        error: "Modifier group not found"
+      });
+    }
+
+    next(err);
+  }
+});
+
+// POST /api/modifier-groups/:groupId/options
+// Adds an option to one modifier group.
+router.post("/api/modifier-groups/:groupId/options", requirePlatformAdmin, async (req, res, next) => {
+  try {
+    const groupId = Number(req.params.groupId);
+    const { name, priceDelta, sort, available } = req.body;
+
+    if (!Number.isInteger(groupId)) {
+      return res.status(400).json({
+        error: "Modifier group id must be a number"
+      });
+    }
+
+    if (!name) {
+      return res.status(400).json({
+        error: "Modifier option name is required"
+      });
+    }
+
+    const option = await prisma.modifierOption.create({
+      data: {
+        modifierGroupId: groupId,
+        name,
+        priceDelta: priceDelta === undefined || priceDelta === "" ? 0 : priceDelta,
+        sort: sort === undefined || sort === "" ? 0 : Number(sort),
+        available: available === undefined ? true : Boolean(available)
+      }
+    });
+
+    res.status(201).json(option);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/modifier-options/:optionId
+// Updates one modifier option.
+router.patch("/api/modifier-options/:optionId", requirePlatformAdmin, async (req, res, next) => {
+  try {
+    const optionId = Number(req.params.optionId);
+    const { name, priceDelta, sort, available } = req.body;
+
+    if (!Number.isInteger(optionId)) {
+      return res.status(400).json({
+        error: "Modifier option id must be a number"
+      });
+    }
+
+    if (!name) {
+      return res.status(400).json({
+        error: "Modifier option name is required"
+      });
+    }
+
+    const option = await prisma.modifierOption.update({
+      where: {
+        id: optionId
+      },
+      data: {
+        name,
+        priceDelta: priceDelta === undefined || priceDelta === "" ? 0 : priceDelta,
+        sort: sort === undefined || sort === "" ? 0 : Number(sort),
+        available: available === undefined ? true : Boolean(available)
+      }
+    });
+
+    res.json(option);
+  } catch (err) {
+    if (err.code === "P2025") {
+      return res.status(404).json({
+        error: "Modifier option not found"
+      });
+    }
+
+    next(err);
+  }
+});
+
+// DELETE /api/modifier-options/:optionId
+// Deletes one modifier option.
+router.delete("/api/modifier-options/:optionId", requirePlatformAdmin, async (req, res, next) => {
+  try {
+    const optionId = Number(req.params.optionId);
+
+    if (!Number.isInteger(optionId)) {
+      return res.status(400).json({
+        error: "Modifier option id must be a number"
+      });
+    }
+
+    const option = await prisma.modifierOption.delete({
+      where: {
+        id: optionId
+      }
+    });
+
+    res.json({
+      message: "Modifier option deleted",
+      option
+    });
+  } catch (err) {
+    if (err.code === "P2025") {
+      return res.status(404).json({
+        error: "Modifier option not found"
+      });
+    }
+
+    next(err);
+  }
+});
+
+// GET /api/menu-items/:menuItemId/modifier-groups
+// Returns the modifier groups assigned to one menu item.
+router.get("/api/menu-items/:menuItemId/modifier-groups", requirePlatformAdmin, async (req, res, next) => {
+  try {
+    const menuItemId = Number(req.params.menuItemId);
+
+    if (!Number.isInteger(menuItemId)) {
+      return res.status(400).json({
+        error: "Menu item id must be a number"
+      });
+    }
+
+    const menuItem = await prisma.menuItem.findUnique({
+      where: {
+        id: menuItemId
+      },
+      include: {
+        modifierGroupLinks: {
+          include: {
+            modifierGroup: {
+              include: modifierGroupInclude()
+            }
+          }
+        }
+      }
+    });
+
+    if (!menuItem) {
+      return res.status(404).json({
+        error: "Menu item not found"
+      });
+    }
+
+    res.json(menuItem.modifierGroupLinks.map((link) => link.modifierGroup));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/menu-items/:menuItemId/modifier-groups
+// Replaces the modifier group assignments for one menu item.
+router.put("/api/menu-items/:menuItemId/modifier-groups", requirePlatformAdmin, async (req, res, next) => {
+  try {
+    const menuItemId = Number(req.params.menuItemId);
+    const modifierGroupIds = Array.isArray(req.body.modifierGroupIds) ? req.body.modifierGroupIds.map(Number) : [];
+
+    if (!Number.isInteger(menuItemId)) {
+      return res.status(400).json({
+        error: "Menu item id must be a number"
+      });
+    }
+
+    const menuItem = await prisma.menuItem.findUnique({
+      where: {
+        id: menuItemId
+      }
+    });
+
+    if (!menuItem) {
+      return res.status(404).json({
+        error: "Menu item not found"
+      });
+    }
+
+    const uniqueGroupIds = [...new Set(modifierGroupIds)].filter((id) => Number.isInteger(id));
+    const modifierGroups = await prisma.modifierGroup.findMany({
+      where: {
+        id: {
+          in: uniqueGroupIds
+        },
+        restaurantId: menuItem.restaurantId
+      }
+    });
+
+    if (modifierGroups.length !== uniqueGroupIds.length) {
+      return res.status(400).json({
+        error: "All modifier groups must belong to the same restaurant as the menu item"
+      });
+    }
+
+    await prisma.menuItemModifierGroup.deleteMany({
+      where: {
+        menuItemId
+      }
+    });
+
+    if (uniqueGroupIds.length > 0) {
+      await prisma.menuItemModifierGroup.createMany({
+        data: uniqueGroupIds.map((modifierGroupId) => ({
+          menuItemId,
+          modifierGroupId
+        })),
+        skipDuplicates: true
+      });
+    }
+
+    const updatedMenuItem = await prisma.menuItem.findUnique({
+      where: {
+        id: menuItemId
+      },
+      include: {
+        modifierGroupLinks: {
+          include: {
+            modifierGroup: {
+              include: modifierGroupInclude()
+            }
+          }
+        }
+      }
+    });
+
+    res.json(updatedMenuItem.modifierGroupLinks.map((link) => link.modifierGroup));
+  } catch (err) {
     next(err);
   }
 });
@@ -309,6 +1023,17 @@ router.post(["/api/restaurants/:restaurantId/orders", "/restaurants/:restaurantI
         },
         restaurantId,
         isAvailable: true
+      },
+      include: {
+        modifierGroupLinks: {
+          include: {
+            modifierGroup: {
+              include: {
+                options: true
+              }
+            }
+          }
+        }
       }
     });
 
@@ -327,15 +1052,9 @@ router.post(["/api/restaurants/:restaurantId/orders", "/restaurants/:restaurantI
         });
       }
 
-      const price = Number(menuItem.price);
-      total += price * quantity;
-
-      orderItems.push({
-        menuItemId: menuItem.id,
-        name: menuItem.name,
-        price: menuItem.price,
-        quantity
-      });
+      const orderItemSnapshot = buildOrderItemSnapshot(menuItem, item);
+      total += Number(orderItemSnapshot.finalPrice) * quantity;
+      orderItems.push(orderItemSnapshot);
     }
 
     const order = await prisma.order.create({
@@ -357,13 +1076,22 @@ router.post(["/api/restaurants/:restaurantId/orders", "/restaurants/:restaurantI
 
     sendOrder(res, 201, order);
   } catch (err) {
+    if (
+      err.message &&
+      (err.message.startsWith("Order includes") || err.message.includes("requires") || err.message.includes("allows"))
+    ) {
+      return res.status(400).json({
+        error: err.message
+      });
+    }
+
     next(err);
   }
 });
 
 // GET /api/restaurants/:restaurantId/orders
 // Lists orders for one restaurant so the admin page can manage them.
-router.get("/api/restaurants/:restaurantId/orders", async (req, res, next) => {
+router.get("/api/restaurants/:restaurantId/orders", requireRestaurantAccess("restaurantId"), async (req, res, next) => {
   try {
     const restaurantId = Number(req.params.restaurantId);
 
@@ -389,13 +1117,7 @@ router.get("/api/restaurants/:restaurantId/orders", async (req, res, next) => {
       where: {
         restaurantId
       },
-      include: {
-        items: {
-          orderBy: {
-            id: "asc"
-          }
-        }
-      },
+      include: orderInclude(),
       orderBy: {
         createdAt: "desc"
       }
@@ -410,9 +1132,47 @@ router.get("/api/restaurants/:restaurantId/orders", async (req, res, next) => {
   }
 });
 
+// GET /api/restaurants/:restaurantId/live-orders-info
+// Returns only the restaurant details needed by the live orders tablet screen.
+router.get("/api/restaurants/:restaurantId/live-orders-info", requireRestaurantAccess("restaurantId"), async (req, res, next) => {
+  try {
+    const restaurantId = Number(req.params.restaurantId);
+
+    if (!Number.isInteger(restaurantId)) {
+      return res.status(400).json({
+        error: "Restaurant id must be a number"
+      });
+    }
+
+    const restaurant = await prisma.restaurant.findUnique({
+      where: {
+        id: restaurantId
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        phone: true,
+        address: true,
+        themeColor: true
+      }
+    });
+
+    if (!restaurant) {
+      return res.status(404).json({
+        error: "Restaurant not found"
+      });
+    }
+
+    res.json(restaurant);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // PATCH /api/orders/:orderId/status
 // Updates an order status from the admin page.
-router.patch("/api/orders/:orderId/status", async (req, res, next) => {
+router.patch("/api/orders/:orderId/status", requireOrderAccess(), async (req, res, next) => {
   try {
     const orderId = Number(req.params.orderId);
     const status = String(req.body.status || "").toUpperCase();
@@ -425,7 +1185,7 @@ router.patch("/api/orders/:orderId/status", async (req, res, next) => {
 
     if (!orderStatuses.includes(status)) {
       return res.status(400).json({
-        error: "Status must be PENDING, ACCEPTED, READY, COMPLETED, or CANCELLED"
+        error: "Status must be PENDING, ACCEPTED, COMPLETED, or CANCELLED"
       });
     }
 
@@ -434,11 +1194,12 @@ router.patch("/api/orders/:orderId/status", async (req, res, next) => {
         id: orderId
       },
       data: {
-        status
+        status,
+        cancelledAt: status === "CANCELLED" ? new Date() : undefined,
+        acceptedAt: status === "ACCEPTED" ? new Date() : undefined,
+        printedAt: status === "ACCEPTED" ? null : undefined
       },
-      include: {
-        items: true
-      }
+      include: orderInclude()
     });
 
     sendOrder(res, 200, order);
@@ -453,9 +1214,148 @@ router.patch("/api/orders/:orderId/status", async (req, res, next) => {
   }
 });
 
+// PATCH /api/orders/:orderId/accept
+// Accepts a pending order and leaves printedAt empty for receipt printing.
+router.patch("/api/orders/:orderId/accept", requireOrderAccess(), async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.orderId);
+
+    if (!Number.isInteger(orderId)) {
+      return res.status(400).json({
+        error: "Order id must be a number"
+      });
+    }
+
+    const order = await prisma.order.update({
+      where: {
+        id: orderId
+      },
+      data: {
+        status: "ACCEPTED",
+        acceptedAt: new Date(),
+        printedAt: null,
+        cancelledAt: null
+      },
+      include: orderInclude()
+    });
+
+    sendOrder(res, 200, order);
+  } catch (err) {
+    if (err.code === "P2025") {
+      return res.status(404).json({
+        error: "Order not found"
+      });
+    }
+
+    next(err);
+  }
+});
+
+// PATCH /api/orders/:orderId/decline
+// Declines a pending order and records the cancellation time.
+router.patch("/api/orders/:orderId/decline", requireOrderAccess(), async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.orderId);
+
+    if (!Number.isInteger(orderId)) {
+      return res.status(400).json({
+        error: "Order id must be a number"
+      });
+    }
+
+    const order = await prisma.order.update({
+      where: {
+        id: orderId
+      },
+      data: {
+        status: "CANCELLED",
+        cancelledAt: new Date()
+      },
+      include: orderInclude()
+    });
+
+    sendOrder(res, 200, order);
+  } catch (err) {
+    if (err.code === "P2025") {
+      return res.status(404).json({
+        error: "Order not found"
+      });
+    }
+
+    next(err);
+  }
+});
+
+// PATCH /api/orders/:orderId/printed
+// Marks an accepted order as printed after browser or external printing.
+router.patch("/api/orders/:orderId/printed", requireOrderAccess(), async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.orderId);
+
+    if (!Number.isInteger(orderId)) {
+      return res.status(400).json({
+        error: "Order id must be a number"
+      });
+    }
+
+    const order = await prisma.order.update({
+      where: {
+        id: orderId
+      },
+      data: {
+        printedAt: new Date()
+      },
+      include: orderInclude()
+    });
+
+    sendOrder(res, 200, order);
+  } catch (err) {
+    if (err.code === "P2025") {
+      return res.status(404).json({
+        error: "Order not found"
+      });
+    }
+
+    next(err);
+  }
+});
+
+// GET /api/print-agent/restaurants/:restaurantId/orders
+// Gives a future print agent the accepted orders that have not printed yet.
+router.get("/api/print-agent/restaurants/:restaurantId/orders", requireRestaurantAccess("restaurantId"), async (req, res, next) => {
+  try {
+    const restaurantId = Number(req.params.restaurantId);
+
+    if (!Number.isInteger(restaurantId)) {
+      return res.status(400).json({
+        error: "Restaurant id must be a number"
+      });
+    }
+
+    const orders = await prisma.order.findMany({
+      where: {
+        restaurantId,
+        status: "ACCEPTED",
+        printedAt: null
+      },
+      include: orderInclude(),
+      orderBy: {
+        acceptedAt: "asc"
+      }
+    });
+
+    res.json(orders.map((order) => ({
+      ...order,
+      subtotal: order.total
+    })));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /restaurants/:restaurantId/categories/:categoryId/menu-items
 // Returns one category and only the menu items that belong to it.
-router.get("/restaurants/:restaurantId/categories/:categoryId/menu-items", async (req, res, next) => {
+router.get("/restaurants/:restaurantId/categories/:categoryId/menu-items", requirePlatformAdmin, async (req, res, next) => {
   try {
     const restaurantId = Number(req.params.restaurantId);
     const categoryId = Number(req.params.categoryId);
@@ -485,7 +1385,14 @@ router.get("/restaurants/:restaurantId/categories/:categoryId/menu-items", async
         categoryId
       },
       include: {
-        menuCategory: true
+        menuCategory: true,
+        modifierGroupLinks: {
+          include: {
+            modifierGroup: {
+              include: modifierGroupInclude()
+            }
+          }
+        }
       },
       orderBy: {
         name: "asc"
@@ -503,7 +1410,7 @@ router.get("/restaurants/:restaurantId/categories/:categoryId/menu-items", async
 
 // PATCH /menu-items/:id
 // Updates one menu item.
-router.patch("/menu-items/:id", async (req, res, next) => {
+router.patch("/menu-items/:id", requirePlatformAdmin, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     const { name, description, imageUrl, category, categoryId, price, isAvailable } = req.body;
@@ -581,7 +1488,7 @@ router.patch("/menu-items/:id", async (req, res, next) => {
 
 // PATCH /menu-categories/:id
 // Updates one menu category.
-router.patch("/menu-categories/:id", async (req, res, next) => {
+router.patch("/menu-categories/:id", requirePlatformAdmin, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     const { name, sortOrder } = req.body;
@@ -628,7 +1535,7 @@ router.patch("/menu-categories/:id", async (req, res, next) => {
 
 // DELETE /menu-categories/:id
 // Deletes one menu category and keeps its menu items uncategorized.
-router.delete("/menu-categories/:id", async (req, res, next) => {
+router.delete("/menu-categories/:id", requirePlatformAdmin, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
 
@@ -661,7 +1568,7 @@ router.delete("/menu-categories/:id", async (req, res, next) => {
 
 // DELETE /menu-items/:id
 // Deletes one menu item.
-router.delete("/menu-items/:id", async (req, res, next) => {
+router.delete("/menu-items/:id", requirePlatformAdmin, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
 
@@ -712,9 +1619,7 @@ router.get("/public/restaurants/:slug", async (req, res, next) => {
           where: {
             isAvailable: true
           },
-          include: {
-            menuCategory: true
-          }
+          include: publicMenuItemInclude()
         }
       }
     });

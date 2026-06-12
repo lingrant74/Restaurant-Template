@@ -17,9 +17,24 @@ model Restaurant {
   themeColor  String     @default("#d62828")
   menuItems   MenuItem[]
   categories  MenuCategory[]
+  modifierGroups ModifierGroup[]
   orders      Order[]
+  restaurantUsers RestaurantUser[]
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
+}
+
+model RestaurantUser {
+  id           Int        @id @default(autoincrement())
+  restaurantId Int
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  email        String     @unique
+  name         String?
+  picture      String?
+  role         String     @default("STAFF")
+  status       String     @default("PENDING")
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 }
 
 model MenuCategory {
@@ -48,8 +63,49 @@ model MenuItem {
   restaurantId Int
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   orderItems   OrderItem[]
+  modifierGroupLinks MenuItemModifierGroup[]
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
+}
+
+model ModifierGroup {
+  id             Int        @id @default(autoincrement())
+  restaurantId   Int
+  restaurant     Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  name           String
+  required       Boolean    @default(false)
+  allowMultiple  Boolean    @default(false)
+  minSelections  Int        @default(0)
+  maxSelections  Int?
+  sort           Int        @default(0)
+  options        ModifierOption[]
+  menuItemLinks  MenuItemModifierGroup[]
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@unique([restaurantId, name])
+}
+
+model ModifierOption {
+  id              Int           @id @default(autoincrement())
+  modifierGroupId Int
+  modifierGroup   ModifierGroup @relation(fields: [modifierGroupId], references: [id], onDelete: Cascade)
+  name            String
+  priceDelta      Decimal       @default(0) @db.Decimal(10, 2)
+  sort            Int           @default(0)
+  available       Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model MenuItemModifierGroup {
+  id              Int           @id @default(autoincrement())
+  menuItemId      Int
+  menuItem        MenuItem      @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  modifierGroupId Int
+  modifierGroup   ModifierGroup @relation(fields: [modifierGroupId], references: [id], onDelete: Cascade)
+
+  @@unique([menuItemId, modifierGroupId])
 }
 
 model Order {
@@ -60,6 +116,9 @@ model Order {
   notes         String?
   status        String      @default("PENDING")
   total         Decimal     @db.Decimal(10, 2)
+  acceptedAt    DateTime?
+  printedAt     DateTime?
+  cancelledAt   DateTime?
   restaurantId  Int
   restaurant    Restaurant  @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   items         OrderItem[]
@@ -71,7 +130,11 @@ model OrderItem {
   id         Int      @id @default(autoincrement())
   name       String
   price      Decimal  @db.Decimal(10, 2)
+  basePrice  Decimal  @default(0) @db.Decimal(10, 2)
+  finalPrice Decimal  @default(0) @db.Decimal(10, 2)
   quantity   Int
+  customerComment String?
+  selectedModifiers Json @default("[]")
   orderId    Int
   order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   menuItemId Int?

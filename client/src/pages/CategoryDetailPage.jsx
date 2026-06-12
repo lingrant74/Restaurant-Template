@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { createMenuItem, deleteMenuItem, getCategoryItems, getRestaurant, updateMenuItem } from "../api.js";
+import {
+  createMenuItem,
+  deleteMenuItem,
+  getCategoryItems,
+  getModifierGroups,
+  getRestaurant,
+  setMenuItemModifierGroups,
+  updateMenuItem
+} from "../api.js";
 import AdminHeader from "../components/AdminHeader.jsx";
 import AdminStatus from "../components/AdminStatus.jsx";
 import MenuItemCard from "../components/MenuItemCard.jsx";
@@ -12,6 +20,7 @@ export default function CategoryDetailPage() {
   const [restaurant, setRestaurant] = useState(null);
   const [category, setCategory] = useState(null);
   const [menuItems, setMenuItems] = useState([]);
+  const [modifierGroups, setModifierGroups] = useState([]);
   const [menuItemForm, setMenuItemForm] = useState(emptyMenuItemForm);
   const [statusMessage, setStatusMessage] = useState("");
   const [error, setError] = useState("");
@@ -21,13 +30,15 @@ export default function CategoryDetailPage() {
     try {
       setIsLoading(true);
       setError("");
-      const [restaurantData, categoryData] = await Promise.all([
+      const [restaurantData, categoryData, modifierGroupData] = await Promise.all([
         getRestaurant(restaurantId),
-        getCategoryItems(restaurantId, categoryId)
+        getCategoryItems(restaurantId, categoryId),
+        getModifierGroups(restaurantId)
       ]);
       setRestaurant(restaurantData);
       setCategory(categoryData.category);
       setMenuItems(categoryData.menuItems);
+      setModifierGroups(modifierGroupData);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -41,6 +52,18 @@ export default function CategoryDetailPage() {
 
   function updateMenuItemField(event) {
     const { name, value, type, checked } = event.target;
+
+    if (name === "modifierGroupIds") {
+      const groupId = Number(value);
+      setMenuItemForm((currentForm) => ({
+        ...currentForm,
+        modifierGroupIds: checked
+          ? [...(currentForm.modifierGroupIds || []), groupId]
+          : (currentForm.modifierGroupIds || []).filter((id) => id !== groupId)
+      }));
+      return;
+    }
+
     setMenuItemForm((currentForm) => ({
       ...currentForm,
       [name]: type === "checkbox" ? checked : value
@@ -58,6 +81,7 @@ export default function CategoryDetailPage() {
         categoryId: Number(categoryId)
       });
 
+      await setMenuItemModifierGroups(menuItem.id, menuItemForm.modifierGroupIds || []);
       setMenuItemForm(emptyMenuItemForm);
       setStatusMessage(`Added ${menuItem.name}.`);
       await loadCategoryPage();
@@ -75,6 +99,7 @@ export default function CategoryDetailPage() {
         ...form,
         categoryId: Number(categoryId)
       });
+      await setMenuItemModifierGroups(menuItemId, form.modifierGroupIds || []);
       setStatusMessage(`Saved ${updatedItem.name}.`);
       await loadCategoryPage();
     } catch (err) {
@@ -116,7 +141,7 @@ export default function CategoryDetailPage() {
       )}
 
       <section className="admin-grid">
-        <MenuItemForm value={menuItemForm} onChange={updateMenuItemField} onSubmit={submitMenuItem} />
+        <MenuItemForm value={menuItemForm} modifierGroups={modifierGroups} onChange={updateMenuItemField} onSubmit={submitMenuItem} />
 
         <section className="restaurant-list flat-panel">
           <div className="panel-heading">
@@ -129,7 +154,7 @@ export default function CategoryDetailPage() {
           ) : (
             <div className="menu-admin-grid">
               {menuItems.map((item) => (
-                <MenuItemCard key={item.id} item={item} onSave={saveMenuItem} onDelete={removeMenuItem} />
+                <MenuItemCard key={item.id} item={item} modifierGroups={modifierGroups} onSave={saveMenuItem} onDelete={removeMenuItem} />
               ))}
             </div>
           )}
