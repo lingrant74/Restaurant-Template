@@ -82,6 +82,17 @@ export default function RestaurantsPage() {
           </label>
 
           <label>
+            Owner/Staff Google Email
+            <input
+              name="ownerEmail"
+              type="email"
+              value={restaurantForm.ownerEmail}
+              onChange={updateRestaurantField}
+              required
+            />
+          </label>
+
+          <label>
             Description
             <textarea name="description" value={restaurantForm.description} onChange={updateRestaurantField} rows="3" />
           </label>

@@ -12,7 +12,7 @@ export default function AdminHeader({ title, eyebrow = "Admin", children }) {
       </div>
       <nav className="admin-nav">
         <Link to="/admin">Restaurants</Link>
-        <a href="/joes-pizza">Public page</a>
+        <a href="/r/joes-pizza">Public page</a>
         {children}
         {currentUser && (
           <button className="admin-logout-button" type="button" onClick={logout}>

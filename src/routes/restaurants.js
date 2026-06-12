@@ -21,6 +21,7 @@ const defaultCategoryNames = [
   "Side Sauce"
 ];
 const orderStatuses = ["PENDING", "ACCEPTED", "COMPLETED", "CANCELLED"];
+const restaurantUserRoles = ["OWNER", "STAFF"];
 const restaurantUserStatuses = ["PENDING", "APPROVED", "REJECTED"];
 
 function createDefaultCategories() {
@@ -192,6 +193,7 @@ function buildOrderItemSnapshot(menuItem, orderItem) {
 router.post("/restaurants", requirePlatformAdmin, async (req, res, next) => {
   try {
     const { name, slug, description, address, phone, themeColor } = req.body;
+    const ownerEmail = String(req.body.ownerEmail || "").trim().toLowerCase();
 
     if (!name) {
       return res.status(400).json({
@@ -199,30 +201,55 @@ router.post("/restaurants", requirePlatformAdmin, async (req, res, next) => {
       });
     }
 
-    const restaurant = await prisma.restaurant.create({
-      data: {
-        name,
-        slug: slug || createSlug(name),
-        description,
-        address,
-        phone,
-        themeColor,
-        categories: {
-          create: createDefaultCategories()
-        }
-      },
-      include: {
-        categories: {
-          orderBy: {
-            sortOrder: "asc"
+    if (!ownerEmail) {
+      return res.status(400).json({
+        error: "Restaurant owner/staff email is required"
+      });
+    }
+
+    const restaurant = await prisma.$transaction(async (tx) => {
+      const createdRestaurant = await tx.restaurant.create({
+        data: {
+          name,
+          slug: slug || createSlug(name),
+          description,
+          address,
+          phone,
+          themeColor,
+          categories: {
+            create: createDefaultCategories()
+          }
+        },
+        include: {
+          categories: {
+            orderBy: {
+              sortOrder: "asc"
+            }
           }
         }
-      }
+      });
+
+      await tx.restaurantUser.create({
+        data: {
+          restaurantId: createdRestaurant.id,
+          email: ownerEmail,
+          role: "OWNER",
+          status: "APPROVED"
+        }
+      });
+
+      return createdRestaurant;
     });
 
     res.status(201).json(restaurant);
   } catch (err) {
     if (err.code === "P2002") {
+      if (Array.isArray(err.meta?.target) && err.meta.target.includes("email")) {
+        return res.status(409).json({
+          error: "That email is already assigned to a restaurant"
+        });
+      }
+
       return res.status(409).json({
         error: "A restaurant with that slug already exists"
       });
@@ -458,7 +485,8 @@ router.post("/api/restaurants/:restaurantId/users", requirePlatformAdmin, async 
     const restaurantId = Number(req.params.restaurantId);
     const email = String(req.body.email || "").trim().toLowerCase();
     const { name, role, status } = req.body;
-    const selectedStatus = status ? String(status).toUpperCase() : "PENDING";
+    const selectedRole = role ? String(role).toUpperCase() : "OWNER";
+    const selectedStatus = status ? String(status).toUpperCase() : "APPROVED";
 
     if (!Number.isInteger(restaurantId)) {
       return res.status(400).json({
@@ -469,6 +497,12 @@ router.post("/api/restaurants/:restaurantId/users", requirePlatformAdmin, async 
     if (!email) {
       return res.status(400).json({
         error: "Email is required"
+      });
+    }
+
+    if (!restaurantUserRoles.includes(selectedRole)) {
+      return res.status(400).json({
+        error: "Role must be OWNER or STAFF"
       });
     }
 
@@ -495,7 +529,7 @@ router.post("/api/restaurants/:restaurantId/users", requirePlatformAdmin, async 
         restaurantId,
         email,
         name,
-        role: role || "STAFF",
+        role: selectedRole,
         status: selectedStatus
       }
     });
@@ -518,6 +552,7 @@ router.patch("/api/restaurant-users/:userId", requirePlatformAdmin, async (req, 
   try {
     const userId = Number(req.params.userId);
     const { name, role, status } = req.body;
+    const selectedRole = role ? String(role).toUpperCase() : undefined;
     const selectedStatus = status ? String(status).toUpperCase() : undefined;
 
     if (!Number.isInteger(userId)) {
@@ -532,13 +567,19 @@ router.patch("/api/restaurant-users/:userId", requirePlatformAdmin, async (req, 
       });
     }
 
+    if (selectedRole && !restaurantUserRoles.includes(selectedRole)) {
+      return res.status(400).json({
+        error: "Role must be OWNER or STAFF"
+      });
+    }
+
     const user = await prisma.restaurantUser.update({
       where: {
         id: userId
       },
       data: {
         name,
-        role,
+        role: selectedRole,
         status: selectedStatus
       }
     });

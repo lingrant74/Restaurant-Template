@@ -10,8 +10,7 @@ export default function RestaurantUsersPage() {
   const [users, setUsers] = useState([]);
   const [form, setForm] = useState({
     email: "",
-    name: "",
-    status: "PENDING"
+    role: "OWNER"
   });
   const [statusMessage, setStatusMessage] = useState("");
   const [error, setError] = useState("");
@@ -55,8 +54,7 @@ export default function RestaurantUsersPage() {
       const user = await createRestaurantUser(restaurantId, form);
       setForm({
         email: "",
-        name: "",
-        status: "PENDING"
+        role: "OWNER"
       });
       setStatusMessage(`Added ${user.email}.`);
       await loadUsersPage();
@@ -71,6 +69,18 @@ export default function RestaurantUsersPage() {
       setStatusMessage("");
       const user = await updateRestaurantUser(userId, { status });
       setStatusMessage(`${user.email} is now ${user.status}.`);
+      await loadUsersPage();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function changeRole(userId, role) {
+    try {
+      setError("");
+      setStatusMessage("");
+      const user = await updateRestaurantUser(userId, { role });
+      setStatusMessage(`${user.email} role changed to ${user.role}.`);
       await loadUsersPage();
     } catch (err) {
       setError(err.message);
@@ -122,20 +132,14 @@ export default function RestaurantUsersPage() {
           </label>
 
           <label>
-            Name
-            <input name="name" value={form.name} onChange={updateForm} />
-          </label>
-
-          <label>
-            Status
-            <select name="status" value={form.status} onChange={updateForm}>
-              <option value="PENDING">Pending</option>
-              <option value="APPROVED">Approved</option>
-              <option value="REJECTED">Rejected</option>
+            Role
+            <select name="role" value={form.role} onChange={updateForm}>
+              <option value="OWNER">Owner</option>
+              <option value="STAFF">Staff</option>
             </select>
           </label>
 
-          <button type="submit">Add User</button>
+          <button type="submit">Link User</button>
         </form>
 
         <section className="restaurant-list flat-panel">
@@ -158,6 +162,10 @@ export default function RestaurantUsersPage() {
                   </div>
 
                   <div className="restaurant-user-actions">
+                    <select value={user.role} onChange={(event) => changeRole(user.id, event.target.value)}>
+                      <option value="OWNER">Owner</option>
+                      <option value="STAFF">Staff</option>
+                    </select>
                     <button type="button" onClick={() => changeStatus(user.id, "APPROVED")}>Approve</button>
                     <button type="button" onClick={() => changeStatus(user.id, "REJECTED")}>Reject</button>
                     <button className="danger-button" type="button" onClick={() => removeUser(user.id)}>Remove</button>

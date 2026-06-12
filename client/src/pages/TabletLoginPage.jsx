@@ -1,14 +1,36 @@
 import { GoogleLogin } from "@react-oauth/google";
-import { Navigate, useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { Link, Navigate, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
 import { useAuth } from "../auth.jsx";
 import AdminStatus from "../components/AdminStatus.jsx";
+import { getRestaurants } from "../api.js";
 
 export default function TabletLoginPage() {
   const navigate = useNavigate();
   const { currentUser, loading, login } = useAuth();
+  const [restaurants, setRestaurants] = useState([]);
+  const [isLoadingRestaurants, setIsLoadingRestaurants] = useState(false);
   const [error, setError] = useState("");
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+
+  async function loadRestaurantsForAdmin() {
+    try {
+      setIsLoadingRestaurants(true);
+      setError("");
+      const data = await getRestaurants();
+      setRestaurants(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsLoadingRestaurants(false);
+    }
+  }
+
+  useEffect(() => {
+    if (currentUser?.role === "PLATFORM_ADMIN") {
+      loadRestaurantsForAdmin();
+    }
+  }, [currentUser?.role]);
 
   if (loading) {
     return <AdminStatus title="Checking tablet session..." />;
@@ -19,7 +41,38 @@ export default function TabletLoginPage() {
   }
 
   if (currentUser?.role === "PLATFORM_ADMIN") {
-    return <Navigate to="/admin" replace />;
+    return (
+      <main className="admin-login-page">
+        <section className="admin-login-card admin-login-card-wide">
+          <p className="eyebrow">Restaurant Tablet</p>
+          <h1>Choose Restaurant</h1>
+          <p>Open a restaurant order dashboard. This screen is only for accepting, printing, and completing orders.</p>
+
+          {error && <p className="login-error">{error}</p>}
+
+          {isLoadingRestaurants ? (
+            <p className="empty-message">Loading restaurants...</p>
+          ) : restaurants.length === 0 ? (
+            <p className="empty-message">No restaurants yet. Create one from the platform admin first.</p>
+          ) : (
+            <div className="tablet-restaurant-list">
+              {restaurants.map((restaurant) => (
+                <Link
+                  className="tablet-restaurant-card"
+                  key={restaurant.id}
+                  to={`/admin/restaurants/${restaurant.id}/live-orders`}
+                >
+                  <span>{restaurant.name}</span>
+                  <small>/{restaurant.slug}</small>
+                </Link>
+              ))}
+            </div>
+          )}
+
+          <Link className="secondary-login-link" to="/admin">Go to platform admin</Link>
+        </section>
+      </main>
+    );
   }
 
   async function handleGoogleSuccess(response) {
@@ -41,9 +94,7 @@ export default function TabletLoginPage() {
       }
 
       if (user.role === "PLATFORM_ADMIN") {
-        navigate("/admin", {
-          replace: true
-        });
+        await loadRestaurantsForAdmin();
       }
     } catch (err) {
       setError(err.message);

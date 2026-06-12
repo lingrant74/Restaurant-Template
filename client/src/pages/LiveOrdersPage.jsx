@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { acceptOrder, declineOrder, getLiveOrdersRestaurant, getOrders, markOrderPrinted, updateOrderStatus } from "../api.js";
 import AdminStatus from "../components/AdminStatus.jsx";
+import OnlineMenuLink from "../components/OnlineMenuLink.jsx";
 import { useAuth } from "../auth.jsx";
 import { formatPrice } from "../utils.js";
 
@@ -32,6 +33,8 @@ export default function LiveOrdersPage() {
   const [isMuted, setIsMuted] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState("ALL");
+  const [viewedPendingOrderIds, setViewedPendingOrderIds] = useState([]);
+  const [selectedOrderId, setSelectedOrderId] = useState(null);
   const audioContextRef = useRef(null);
 
   const pendingOrders = orders.filter((order) => order.status === "PENDING");
@@ -67,6 +70,14 @@ export default function LiveOrdersPage() {
       count: cancelledOrders.length
     }
   ];
+  const selectedOrder = orders.find((order) => order.id === selectedOrderId);
+  const viewedPendingOrderIdSet = useMemo(() => new Set(viewedPendingOrderIds), [viewedPendingOrderIds]);
+  const unseenPendingOrders = pendingOrders
+    .filter((order) => !viewedPendingOrderIdSet.has(order.id))
+    .sort((firstOrder, secondOrder) => new Date(firstOrder.createdAt) - new Date(secondOrder.createdAt));
+  const newOrderOverlayTarget = !selectedOrder ? unseenPendingOrders[0] : null;
+  const newOrderOverlayCount = unseenPendingOrders.length;
+  const isNewOrderOverlayActive = Boolean(newOrderOverlayTarget);
   const hasPendingOrders = pendingOrders.length > 0;
 
   async function loadLiveOrders({ quiet = false } = {}) {
@@ -100,7 +111,7 @@ export default function LiveOrdersPage() {
   }, [restaurantId]);
 
   useEffect(() => {
-    if (!hasPendingOrders || !soundEnabled || isMuted) {
+    if (!isNewOrderOverlayActive || !soundEnabled || isMuted) {
       return undefined;
     }
 
@@ -117,7 +128,7 @@ export default function LiveOrdersPage() {
     }, 1500);
 
     return () => window.clearInterval(intervalId);
-  }, [hasPendingOrders, soundEnabled, isMuted]);
+  }, [isNewOrderOverlayActive, soundEnabled, isMuted]);
 
   async function enableSoundAlerts() {
     try {
@@ -144,6 +155,7 @@ export default function LiveOrdersPage() {
       const order = await acceptOrder(orderId);
       setStatusMessage(`Accepted order #${order.id}.`);
       await loadLiveOrders({ quiet: true });
+      setSelectedOrderId(null);
     } catch (err) {
       setError(err.message);
     }
@@ -155,6 +167,7 @@ export default function LiveOrdersPage() {
       const order = await declineOrder(orderId);
       setStatusMessage(`Declined order #${order.id}.`);
       await loadLiveOrders({ quiet: true });
+      setSelectedOrderId(null);
     } catch (err) {
       setError(err.message);
     }
@@ -189,6 +202,19 @@ export default function LiveOrdersPage() {
   function chooseFilter(filterValue) {
     setStatusFilter(filterValue);
     setIsDrawerOpen(false);
+    setSelectedOrderId(null);
+  }
+
+  function openNewOrderDetail() {
+    if (!newOrderOverlayTarget) {
+      return;
+    }
+
+    setViewedPendingOrderIds((currentIds) => (
+      currentIds.includes(newOrderOverlayTarget.id) ? currentIds : [...currentIds, newOrderOverlayTarget.id]
+    ));
+    setSelectedOrderId(newOrderOverlayTarget.id);
+    setStatusFilter("PENDING");
   }
 
   if (isLoading && !restaurant) {
@@ -200,7 +226,17 @@ export default function LiveOrdersPage() {
   }
 
   return (
-    <main className={hasPendingOrders ? "live-orders-page live-orders-alerting" : "live-orders-page"}>
+    <main className={isNewOrderOverlayActive ? "live-orders-page live-orders-alerting" : "live-orders-page"}>
+      {isNewOrderOverlayActive && (
+        <button className="new-order-takeover" type="button" onClick={openNewOrderDetail}>
+          <span className="new-order-count">
+            {newOrderOverlayCount} new order{newOrderOverlayCount === 1 ? "" : "s"}
+          </span>
+          <strong>NEW ORDER</strong>
+          <span>Tap anywhere to view</span>
+        </button>
+      )}
+
       <header className="live-orders-header">
         <button className="hamburger-button" type="button" onClick={() => setIsDrawerOpen(true)} aria-label="Open dashboard menu">
           <span />
@@ -225,7 +261,7 @@ export default function LiveOrdersPage() {
                 {isMuted ? "Unmute Alerts" : "Mute Alerts"}
               </button>
             )}
-            <span>{hasPendingOrders ? "Pending alert active" : "No pending alerts"}</span>
+            <span>{isNewOrderOverlayActive ? "New order alert active" : hasPendingOrders ? "Pending order open" : "No pending alerts"}</span>
           </div>
         </div>
       </header>
@@ -276,29 +312,42 @@ export default function LiveOrdersPage() {
         ))}
       </section>
 
+      <OnlineMenuLink restaurant={restaurant} compact />
+
       {(statusMessage || error) && (
         <section className={error ? "notice notice-error" : "notice"}>
           {error || statusMessage}
         </section>
       )}
 
-      <section className="live-orders-grid">
-        {filteredOrders.length === 0 ? (
-          <p className="live-empty">No orders match this filter.</p>
-        ) : (
-          filteredOrders.map((order) => (
-            <LiveOrderCard
-              key={order.id}
-              order={order}
-              isHighlighted={highlightedOrderIds.includes(order.id)}
-              onAccept={handleAccept}
-              onReject={handleReject}
-              onPrint={handlePrint}
-              onComplete={handleComplete}
-            />
-          ))
-        )}
-      </section>
+      {selectedOrder ? (
+        <OrderDetailView
+          order={selectedOrder}
+          onBack={() => setSelectedOrderId(null)}
+          onAccept={handleAccept}
+          onReject={handleReject}
+          onPrint={handlePrint}
+          onComplete={handleComplete}
+        />
+      ) : (
+        <section className="live-orders-grid">
+          {filteredOrders.length === 0 ? (
+            <p className="live-empty">No orders match this filter.</p>
+          ) : (
+            filteredOrders.map((order) => (
+              <LiveOrderCard
+                key={order.id}
+                order={order}
+                isHighlighted={highlightedOrderIds.includes(order.id)}
+                onAccept={handleAccept}
+                onReject={handleReject}
+                onPrint={handlePrint}
+                onComplete={handleComplete}
+              />
+            ))
+          )}
+        </section>
+      )}
 
       {printOrder && <PrintableReceipt restaurant={restaurant} order={printOrder} />}
     </main>
@@ -364,6 +413,70 @@ function LiveOrderCard({ order, isHighlighted, onAccept, onReject, onPrint, onCo
         </div>
       </div>
     </article>
+  );
+}
+
+function OrderDetailView({ order, onBack, onAccept, onReject, onPrint, onComplete }) {
+  return (
+    <section className="live-order-detail-view">
+      <div className="live-order-detail-header">
+        <button type="button" onClick={onBack}>Back to Dashboard</button>
+        <div>
+          <p className="eyebrow">Order #{order.id}</p>
+          <h2>{order.customerName}</h2>
+          <p>{order.customerPhone}</p>
+        </div>
+        <div className="live-status-stack">
+          <span className={`live-status-pill status-${order.status.toLowerCase()}`}>{order.status}</span>
+          <time>{new Date(order.createdAt).toLocaleString([], { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" })}</time>
+        </div>
+      </div>
+
+      <div className="live-order-detail-body">
+        {order.notes && (
+          <section className="live-order-detail-notes">
+            <p className="eyebrow">Notes</p>
+            <strong>{order.notes}</strong>
+          </section>
+        )}
+
+        <section>
+          <p className="eyebrow">Items</p>
+          <ReceiptItems order={order} />
+        </section>
+      </div>
+
+      <footer className="live-order-detail-footer">
+        <div className="live-order-total">
+          <span>Total</span>
+          <strong>{formatPrice(order.total || order.subtotal)}</strong>
+        </div>
+
+        <div className="live-order-detail-actions">
+          {order.status === "PENDING" && (
+            <>
+              <button className="accept-order-button" type="button" onClick={() => onAccept(order.id)}>
+                Accept Order
+              </button>
+              <button className="reject-order-button" type="button" onClick={() => onReject(order.id)}>
+                Decline Order
+              </button>
+            </>
+          )}
+
+          {order.status === "ACCEPTED" && (
+            <>
+              <button className="print-order-button" type="button" onClick={() => onPrint(order)}>
+                Print Receipt
+              </button>
+              <button className="complete-order-button" type="button" onClick={() => onComplete(order.id)}>
+                Mark Completed
+              </button>
+            </>
+          )}
+        </div>
+      </footer>
+    </section>
   );
 }
 

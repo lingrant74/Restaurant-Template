@@ -5,6 +5,7 @@ import AdminHeader from "../components/AdminHeader.jsx";
 import AdminStatus from "../components/AdminStatus.jsx";
 import CategoryCard from "../components/CategoryCard.jsx";
 import CategoryForm from "../components/CategoryForm.jsx";
+import OnlineMenuLink from "../components/OnlineMenuLink.jsx";
 import { emptyCategoryForm } from "../utils.js";
 
 export default function RestaurantDetailPage() {
@@ -112,6 +113,8 @@ export default function RestaurantDetailPage() {
           {error || statusMessage}
         </section>
       )}
+
+      <OnlineMenuLink restaurant={restaurant} />
 
       <section className="restaurant-list">
         <div className="panel-heading">

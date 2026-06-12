@@ -546,6 +546,83 @@ button {
   color: #71665c;
 }
 
+.landing-page {
+  min-height: 100vh;
+  padding: 56px max(20px, calc((100vw - 1040px) / 2));
+  background: #f5f7f8;
+}
+
+.landing-hero {
+  max-width: 760px;
+  margin-bottom: 28px;
+}
+
+.landing-hero h1,
+.landing-hero p {
+  margin: 0;
+}
+
+.landing-hero h1 {
+  margin-top: 8px;
+  color: #17202a;
+  font-size: clamp(2.4rem, 7vw, 5rem);
+  line-height: 0.95;
+}
+
+.landing-hero > p:not(.eyebrow) {
+  margin-top: 16px;
+  color: #475569;
+  font-size: clamp(1.05rem, 2vw, 1.35rem);
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.landing-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.landing-card {
+  display: grid;
+  align-content: space-between;
+  gap: 22px;
+  min-height: 220px;
+  padding: 22px;
+  border: 1px solid #dce3e7;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 14px 34px rgba(23, 32, 42, 0.06);
+}
+
+.landing-card h2,
+.landing-card p {
+  margin: 0;
+}
+
+.landing-card h2 {
+  color: #17202a;
+  font-size: 1.45rem;
+}
+
+.landing-card p,
+.landing-card span {
+  margin-top: 8px;
+  color: #475569;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.landing-card a {
+  width: fit-content;
+  border-radius: 6px;
+  padding: 11px 14px;
+  color: #ffffff;
+  background: #0f766e;
+  font-weight: 900;
+  text-decoration: none;
+}
+
 .admin-page {
   min-height: 100vh;
   padding: 32px max(18px, calc((100vw - 1120px) / 2)) 64px;
@@ -569,6 +646,10 @@ button {
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 18px 48px rgba(23, 32, 42, 0.08);
+}
+
+.admin-login-card-wide {
+  width: min(760px, 100%);
 }
 
 .admin-login-card h1,
@@ -599,6 +680,47 @@ button {
   color: #991b1b;
   background: #fef2f2;
   font-weight: 800;
+}
+
+.tablet-restaurant-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.tablet-restaurant-card {
+  display: grid;
+  gap: 6px;
+  min-height: 110px;
+  align-content: center;
+  border: 1px solid #dce3e7;
+  border-radius: 8px;
+  padding: 16px;
+  color: #17202a;
+  background: #fbfdfe;
+  text-decoration: none;
+}
+
+.tablet-restaurant-card:hover {
+  border-color: #0f766e;
+}
+
+.tablet-restaurant-card span {
+  font-size: 1.25rem;
+  font-weight: 900;
+}
+
+.tablet-restaurant-card small {
+  color: #64748b;
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+.secondary-login-link {
+  width: fit-content;
+  color: #0f766e;
+  font-weight: 850;
+  text-decoration: none;
 }
 
 .admin-header {
@@ -671,6 +793,62 @@ button {
   border-color: #f4b4ae;
   background: #fff0ee;
   color: #991b1b;
+}
+
+.online-menu-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border: 1px solid #dce3e7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.online-menu-link-compact {
+  grid-row: 3;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+}
+
+.online-menu-link strong {
+  display: block;
+  margin-top: 4px;
+  color: #17202a;
+  overflow-wrap: anywhere;
+}
+
+.online-menu-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.online-menu-actions button,
+.online-menu-actions a {
+  min-height: 38px;
+  border: 0;
+  border-radius: 6px;
+  padding: 9px 11px;
+  color: #ffffff;
+  background: #0f766e;
+  font-weight: 850;
+  text-decoration: none;
+}
+
+.online-menu-actions a {
+  display: inline-flex;
+  align-items: center;
+  background: #17202a;
+}
+
+.online-menu-link > span {
+  color: #0f766e;
+  font-size: 0.9rem;
+  font-weight: 850;
 }
 
 .admin-grid {
@@ -895,6 +1073,16 @@ button {
   padding: 8px 10px;
   color: #ffffff;
   background: #0f766e;
+  font-weight: 850;
+}
+
+.restaurant-user-actions select {
+  min-height: 38px;
+  border: 1px solid #cbd5df;
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: #17202a;
+  background: #ffffff;
   font-weight: 850;
 }
 
@@ -1338,7 +1526,7 @@ button {
   height: 100vh;
   overflow: hidden;
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
   padding: 0 18px 18px;
   background: #eef2f4;
 }
@@ -1355,6 +1543,53 @@ button {
 
   50% {
     background: #fff1d6;
+  }
+}
+
+.new-order-takeover {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-content: center;
+  gap: 22px;
+  border: 0;
+  padding: 28px;
+  color: #ffffff;
+  background: #b42318;
+  text-align: center;
+  cursor: pointer;
+  animation: new-order-takeover-flash 0.85s ease-in-out infinite;
+}
+
+.new-order-takeover strong {
+  font-size: clamp(4.5rem, 17vw, 12rem);
+  line-height: 0.9;
+  letter-spacing: 0;
+}
+
+.new-order-takeover span {
+  color: #ffffff;
+  font-size: clamp(1.3rem, 4vw, 2.3rem);
+  font-weight: 950;
+}
+
+.new-order-count {
+  width: fit-content;
+  justify-self: center;
+  border-radius: 999px;
+  padding: 10px 18px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+@keyframes new-order-takeover-flash {
+  0%,
+  100% {
+    background: #991b1b;
+  }
+
+  50% {
+    background: #f59e0b;
   }
 }
 
@@ -1513,7 +1748,7 @@ button {
 }
 
 .live-orders-grid {
-  grid-row: 4;
+  grid-row: 5;
   display: flex;
   flex-direction: row;
   align-items: stretch;
@@ -1845,6 +2080,124 @@ button {
   text-align: center;
 }
 
+.live-order-detail-view {
+  grid-row: 5;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  min-height: 0;
+  max-width: 900px;
+  width: min(100%, 900px);
+  margin: 0 auto;
+  padding: 18px;
+  border: 2px solid #dce3e7;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 30px rgba(23, 32, 42, 0.08);
+}
+
+.live-order-detail-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.live-order-detail-header button {
+  min-height: 46px;
+  border: 0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: #ffffff;
+  background: #17202a;
+  font-weight: 900;
+}
+
+.live-order-detail-header h2,
+.live-order-detail-header p {
+  margin: 0;
+}
+
+.live-order-detail-header h2 {
+  margin-top: 4px;
+  color: #17202a;
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  line-height: 1;
+}
+
+.live-order-detail-header p:not(.eyebrow) {
+  margin-top: 8px;
+  color: #475569;
+  font-size: 1.3rem;
+  font-weight: 900;
+}
+
+.live-order-detail-body {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.live-order-detail-notes {
+  display: grid;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 14px;
+  background: #f1f5f9;
+}
+
+.live-order-detail-notes strong {
+  color: #17202a;
+  font-size: 1.1rem;
+  line-height: 1.35;
+}
+
+.live-order-detail-view .receipt-item {
+  gap: 8px;
+  padding: 12px 0;
+}
+
+.live-order-detail-view .receipt-item-main strong,
+.live-order-detail-view .receipt-item-main span {
+  font-size: 1.18rem;
+}
+
+.live-order-detail-view .receipt-item ul,
+.live-order-detail-view .receipt-item p {
+  font-size: 1rem;
+}
+
+.live-order-detail-footer {
+  display: grid;
+  gap: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.live-order-detail-footer .live-order-total {
+  font-size: 1.6rem;
+}
+
+.live-order-detail-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.live-order-detail-actions button {
+  min-height: 76px;
+  border: 0;
+  border-radius: 8px;
+  padding: 14px;
+  color: #ffffff;
+  font-size: 1.25rem;
+  font-weight: 950;
+}
+
 .print-receipt {
   display: none;
 }
@@ -1882,6 +2235,18 @@ button {
 
   .restaurant-details {
     min-width: 0;
+  }
+
+  .landing-page {
+    padding: 34px 16px;
+  }
+
+  .landing-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .landing-card {
+    min-height: 0;
   }
 
   .menu-section {
@@ -1962,6 +2327,20 @@ button {
     justify-content: stretch;
   }
 
+  .online-menu-link {
+    display: grid;
+  }
+
+  .online-menu-actions {
+    justify-content: stretch;
+  }
+
+  .online-menu-actions button,
+  .online-menu-actions a {
+    flex: 1 1 150px;
+    justify-content: center;
+  }
+
   .live-sound-controls {
     width: 100%;
   }
@@ -2027,6 +2406,8 @@ button {
   .order-total-row,
   .modal-heading,
   .modifier-modal-footer,
+  .live-order-detail-header,
+  .live-order-detail-actions,
   .live-order-card-header,
   .live-order-total,
   .receipt-item-main {

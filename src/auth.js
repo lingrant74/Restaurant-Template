@@ -6,11 +6,11 @@ const prisma = require("./prismaClient");
 const authRouter = express.Router();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const sessionCookieName = "restaurant_admin_session";
-const sessionMaxAgeMs = 7 * 24 * 60 * 60 * 1000;
 const roles = {
   platformAdmin: "PLATFORM_ADMIN",
   restaurantUser: "RESTAURANT_USER"
 };
+const unapprovedRestaurantUserMessage = "Your account is not approved yet. Ask the platform admin to link your email to a restaurant.";
 
 function isAdminAuthBypassEnabled() {
   return process.env.NODE_ENV !== "production" && process.env.ADMIN_AUTH_BYPASS === "true";
@@ -48,8 +48,7 @@ function buildCookieOptions() {
   return {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    maxAge: sessionMaxAgeMs
+    secure: process.env.NODE_ENV === "production"
   };
 }
 
@@ -233,27 +232,14 @@ authRouter.post("/api/auth/google", async (req, res, next) => {
 
       if (!restaurantUser) {
         return res.status(403).json({
-          error: "This Google account is not approved for restaurant tablet access"
-        });
-      }
-
-      if (restaurantUser.status === "PENDING") {
-        return res.status(403).json({
-          error: "Your restaurant tablet account is pending approval",
-          status: "PENDING"
-        });
-      }
-
-      if (restaurantUser.status === "REJECTED") {
-        return res.status(403).json({
-          error: "Your restaurant tablet account was rejected",
-          status: "REJECTED"
+          error: unapprovedRestaurantUserMessage
         });
       }
 
       if (restaurantUser.status !== "APPROVED") {
         return res.status(403).json({
-          error: "This restaurant tablet account is not approved"
+          error: unapprovedRestaurantUserMessage,
+          status: restaurantUser.status
         });
       }
 

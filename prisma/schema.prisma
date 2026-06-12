@@ -31,8 +31,8 @@ model RestaurantUser {
   email        String     @unique
   name         String?
   picture      String?
-  role         String     @default("STAFF")
-  status       String     @default("PENDING")
+  role         String     @default("OWNER")
+  status       String     @default("APPROVED")
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 }

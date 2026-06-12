@@ -10,6 +10,7 @@ import LiveOrdersPage from "./pages/LiveOrdersPage.jsx";
 import AdminLoginPage from "./pages/AdminLoginPage.jsx";
 import RestaurantUsersPage from "./pages/RestaurantUsersPage.jsx";
 import TabletLoginPage from "./pages/TabletLoginPage.jsx";
+import LandingPage from "./pages/LandingPage.jsx";
 import ProtectedAdminRoute from "./components/ProtectedAdminRoute.jsx";
 import ProtectedTabletRoute from "./components/ProtectedTabletRoute.jsx";
 import { AuthProvider } from "./auth.jsx";
@@ -38,6 +39,7 @@ export default function App() {
       <AuthProvider>
         <BrowserRouter>
           <Routes>
+            <Route path="/" element={<LandingPage />} />
             <Route path="/admin/login" element={<AdminLoginPage />} />
             <Route path="/tablet/login" element={<TabletLoginPage />} />
             <Route path="/admin" element={adminPage(<RestaurantsPage />)} />
@@ -48,6 +50,7 @@ export default function App() {
             <Route path="/admin/restaurants/:restaurantId/users" element={adminPage(<RestaurantUsersPage />)} />
             <Route path="/admin/restaurants/:restaurantId/categories/:categoryId" element={adminPage(<CategoryDetailPage />)} />
             <Route path="/tablet/restaurants/:restaurantId/live-orders" element={tabletPage(<LiveOrdersPage />)} />
+            <Route path="/r/:slug" element={<PublicRestaurantPage />} />
             <Route path="/:slug" element={<PublicRestaurantPage />} />
             <Route path="*" element={<PublicRestaurantPage />} />
           </Routes>

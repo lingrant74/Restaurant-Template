@@ -1,6 +1,7 @@
 export const emptyRestaurantForm = {
   name: "",
   slug: "",
+  ownerEmail: "",
   description: "",
   address: "",
   phone: "",
