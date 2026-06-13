@@ -1,155 +1,117 @@
 # Restaurant Android Tablet App
 
-Native Android tablet app for restaurant staff. It polls for online orders, shows a full-screen `NEW ORDER` alert, lets staff accept or decline orders, and prints accepted orders to a Wi-Fi/Ethernet ESC/POS kitchen printer over raw TCP.
+Native Android tablet app for restaurant staff. The dashboard is designed to match the website live-orders UI: large `LIVE ORDERS` header, hamburger button, sound alert button, status filters, online menu link card, and horizontal kitchen-ticket style order cards.
 
-This is a separate app. It does not replace or rewrite the existing website.
+This app is separate from the website. It lives in `android-tablet-app` and does not replace the React/Vite frontend.
+
+## Local Backend URL
+
+Do not use `localhost` inside the Android emulator.
+
+If the backend is running on your Mac on port `3000`, use:
+
+```text
+http://10.0.2.2:3000
+```
+
+For restaurant `1`, the local dev token is:
+
+```text
+dev-tablet-token
+```
+
+That token is configured in the root `.env` as:
+
+```text
+TABLET_AGENT_TOKENS=1:dev-tablet-token
+```
+
+Restart the backend after changing `.env`.
+
+## Backend Routes Used
+
+The app now uses the same live-order route names as the website backend:
+
+```text
+GET   /api/restaurants/:restaurantId/live-orders-info
+GET   /api/restaurants/:restaurantId/orders
+PATCH /api/orders/:orderId/accept
+PATCH /api/orders/:orderId/decline
+PATCH /api/orders/:orderId/printed
+```
+
+Every request sends:
+
+```text
+Authorization: Bearer {agentToken}
+```
 
 ## What It Does
 
 - Saves tablet setup locally with SharedPreferences.
-- Supports mock mode so the UI and printer can be tested before backend routes are ready.
-- Polls the backend every 3 seconds for pending orders.
-- Shows a loud, flashing full-screen `NEW ORDER` overlay.
-- Tapping the overlay opens that order detail screen.
-- Accepting an order calls the backend and prints a kitchen ticket if printer settings are saved.
-- Declining an order calls the backend and removes it from the pending flow.
-- Sends ESC/POS bytes to `printerIp:printerPort`, default port `9100`.
-- Keeps the tablet screen awake while the app is open.
+- Defaults API URL to `http://10.0.2.2:3000`.
+- Polls backend orders every 3 seconds.
+- Shows all orders from the backend and filters locally:
+  - All
+  - Pending
+  - In Progress
+  - Completed
+  - Cancelled
+- Shows the website-style full-screen `NEW ORDER` alert for unseen pending orders.
+- Tapping the alert opens that order detail view.
+- Accept/Decline calls the backend status routes.
+- Accepted orders can print through the ESC/POS TCP printer flow.
+- Keeps the tablet screen awake while open.
+- Keeps `Add Mock Order` only when debug mock mode is enabled.
 
 ## Open In Android Studio
 
 1. Open Android Studio.
 2. Choose `Open`.
-3. Select this folder:
+3. Select:
 
 ```text
 /Users/newowner/PROJECTS/restaurant/android-tablet-app
 ```
 
 4. Let Android Studio sync Gradle.
-5. Connect an Android tablet or start an emulator.
-6. Press `Run`.
+5. Run the app on an Android tablet or emulator.
 
-Android Studio will download the Android Gradle plugin, Kotlin plugin, and Compose libraries on first sync.
+## First Run Settings
 
-## First Run
+Use:
 
-On the setup screen:
+```text
+Backend API URL: http://10.0.2.2:3000
+Restaurant ID: 1
+Agent Token: dev-tablet-token
+Mock mode: off
+Printer IP: 192.168.1.45
+Printer Port: 9100
+```
 
-- Backend API URL: example `http://192.168.1.20:3000`
-- Restaurant ID: example `1`
-- Agent Token: temporary token used for `Authorization: Bearer ...`
-- Mock mode: leave on if the backend routes are not built yet
-- Printer IP: example `192.168.1.45`
-- Printer Port: `9100`
-
-Tap `Save Settings`.
-
-## Test Without Backend
-
-Leave `Use mock mode` checked.
-
-The dashboard will show sample pending and accepted orders. You can:
-
-- See the `NEW ORDER` alert
-- Tap into order detail
-- Accept or decline a mock order
-- Add another mock order from the dashboard
-- Open printer settings and send a test print
+If the backend is not running yet, turn on `Debug mock mode`.
 
 ## Printer Test
 
-Use a network ESC/POS printer.
-
-Common settings:
+Use a network ESC/POS printer:
 
 ```text
 Printer IP: 192.168.1.45
 Printer Port: 9100
 ```
 
-The tablet and printer must be on the same network. If printing fails, verify:
+The tablet and printer must be on the same network. The app sends raw ESC/POS bytes over TCP and includes a paper cut command.
 
-- The printer IP address is correct
-- Port `9100` is open
-- The printer supports raw ESC/POS over TCP
-- The Android tablet is on the same Wi-Fi/LAN
+## Build From Terminal
 
-## Backend Routes To Implement Next
+```bash
+cd /Users/newowner/PROJECTS/restaurant/android-tablet-app
+./gradlew :app:assembleDebug
+```
 
-The app is currently wired to these routes:
+The debug APK is created at:
 
 ```text
-GET  /api/restaurant/:restaurantId/orders/pending
-POST /api/orders/:orderId/accept
-POST /api/orders/:orderId/decline
-POST /api/orders/:orderId/printed
-```
-
-All requests send:
-
-```text
-Authorization: Bearer {agentToken}
-```
-
-Suggested response for `GET /api/restaurant/:restaurantId/orders/pending`:
-
-```json
-[
-  {
-    "id": 1001,
-    "customerName": "Maya Chen",
-    "customerPhone": "555-0101",
-    "orderType": "Online",
-    "fulfillmentType": "Pickup",
-    "notes": "Please include extra napkins.",
-    "status": "PENDING",
-    "total": 32.75,
-    "createdAt": "2026-06-12T12:05:00Z",
-    "items": [
-      {
-        "name": "Spicy Tuna Roll",
-        "quantity": 2,
-        "price": 8.5,
-        "finalPrice": 8.5,
-        "selectedModifiers": [
-          {
-            "groupName": "Sauce",
-            "optionName": "Spicy mayo"
-          }
-        ],
-        "customerComment": ""
-      }
-    ]
-  }
-]
-```
-
-Suggested response for accept/decline routes:
-
-Return the updated order object with the new status.
-
-```json
-{
-  "id": 1001,
-  "status": "ACCEPTED",
-  "customerName": "Maya Chen",
-  "customerPhone": "555-0101",
-  "orderType": "Online",
-  "fulfillmentType": "Pickup",
-  "notes": "",
-  "total": 32.75,
-  "createdAt": "2026-06-12T12:05:00Z",
-  "items": []
-}
-```
-
-## Important Files
-
-```text
-settings.gradle.kts
-build.gradle.kts
-app/build.gradle.kts
-app/src/main/AndroidManifest.xml
-app/src/main/java/com/restaurant/tablet/MainActivity.kt
+app/build/outputs/apk/debug/app-debug.apk
 ```

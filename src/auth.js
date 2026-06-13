@@ -44,6 +44,46 @@ function getApprovedAdminEmails() {
     .filter(Boolean);
 }
 
+function getBearerToken(req) {
+  const header = req.get("authorization") || "";
+  const [scheme, token] = header.split(" ");
+
+  if (scheme?.toLowerCase() !== "bearer" || !token) {
+    return null;
+  }
+
+  return token.trim();
+}
+
+function getRestaurantTabletTokens() {
+  return (process.env.TABLET_AGENT_TOKENS || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [restaurantId, token] = entry.split(":");
+      return {
+        restaurantId: Number(restaurantId),
+        token: (token || "").trim()
+      };
+    })
+    .filter((entry) => Number.isInteger(entry.restaurantId) && entry.token);
+}
+
+function hasTabletAgentAccess(req, restaurantId) {
+  const token = getBearerToken(req);
+
+  if (!token || !Number.isInteger(restaurantId)) {
+    return false;
+  }
+
+  if (process.env.TABLET_AGENT_TOKEN && token === process.env.TABLET_AGENT_TOKEN) {
+    return true;
+  }
+
+  return getRestaurantTabletTokens().some((entry) => entry.restaurantId === restaurantId && entry.token === token);
+}
+
 function buildCookieOptions() {
   return {
     httpOnly: true,
@@ -121,12 +161,16 @@ function requirePlatformAdmin(req, res, next) {
 
 function requireRestaurantAccess(paramName = "restaurantId") {
   return function restaurantAccessMiddleware(req, res, next) {
+    const restaurantId = Number(req.params[paramName]);
+
+    if (hasTabletAgentAccess(req, restaurantId)) {
+      return next();
+    }
+
     requireAuth(req, res, () => {
       if (req.adminUser.role === roles.platformAdmin) {
         return next();
       }
-
-      const restaurantId = Number(req.params[paramName]);
 
       if (req.adminUser.role === roles.restaurantUser && Number(req.adminUser.restaurantId) === restaurantId) {
         return next();
@@ -141,33 +185,37 @@ function requireRestaurantAccess(paramName = "restaurantId") {
 
 function requireOrderAccess() {
   return async function orderAccessMiddleware(req, res, next) {
-    requireAuth(req, res, async () => {
-      try {
+    try {
+      const orderId = Number(req.params.orderId);
+
+      if (!Number.isInteger(orderId)) {
+        return res.status(400).json({
+          error: "Order id must be a number"
+        });
+      }
+
+      const order = await prisma.order.findUnique({
+        where: {
+          id: orderId
+        },
+        select: {
+          restaurantId: true
+        }
+      });
+
+      if (!order) {
+        return res.status(404).json({
+          error: "Order not found"
+        });
+      }
+
+      if (hasTabletAgentAccess(req, order.restaurantId)) {
+        return next();
+      }
+
+      requireAuth(req, res, async () => {
         if (req.adminUser.role === roles.platformAdmin) {
           return next();
-        }
-
-        const orderId = Number(req.params.orderId);
-
-        if (!Number.isInteger(orderId)) {
-          return res.status(400).json({
-            error: "Order id must be a number"
-          });
-        }
-
-        const order = await prisma.order.findUnique({
-          where: {
-            id: orderId
-          },
-          select: {
-            restaurantId: true
-          }
-        });
-
-        if (!order) {
-          return res.status(404).json({
-            error: "Order not found"
-          });
         }
 
         if (req.adminUser.role === roles.restaurantUser && Number(req.adminUser.restaurantId) === order.restaurantId) {
@@ -177,10 +225,10 @@ function requireOrderAccess() {
         return res.status(403).json({
           error: "You do not have access to this order"
         });
-      } catch (err) {
-        next(err);
-      }
-    });
+      });
+    } catch (err) {
+      next(err);
+    }
   };
 }
 

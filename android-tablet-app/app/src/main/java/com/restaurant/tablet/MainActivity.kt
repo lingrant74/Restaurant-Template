@@ -13,10 +13,13 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -27,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -54,23 +58,27 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedOutputStream
-import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Socket
-import java.net.URL
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -91,11 +99,19 @@ private enum class Screen {
     Printer
 }
 
+private enum class OrderFilter(val label: String, val status: String?) {
+    All("All", null),
+    Pending("Pending", "PENDING"),
+    InProgress("In Progress", "ACCEPTED"),
+    Completed("Completed", "COMPLETED"),
+    Cancelled("Cancelled", "CANCELLED")
+}
+
 private data class AppSettings(
-    val apiUrl: String = "",
-    val restaurantId: String = "",
+    val apiUrl: String = "http://10.0.2.2:3000",
+    val restaurantId: String = "1",
     val agentToken: String = "",
-    val mockMode: Boolean = true,
+    val mockMode: Boolean = false,
     val printerIp: String = "",
     val printerPort: String = "9100"
 ) {
@@ -103,6 +119,13 @@ private data class AppSettings(
         return mockMode || (apiUrl.isNotBlank() && restaurantId.isNotBlank() && agentToken.isNotBlank())
     }
 }
+
+private data class RestaurantInfo(
+    val id: String = "",
+    val name: String = "Restaurant",
+    val slug: String = "",
+    val themeColor: String = "#0f766e"
+)
 
 private data class Order(
     val id: String,
@@ -114,6 +137,7 @@ private data class Order(
     val status: String,
     val total: Double,
     val createdAt: String,
+    val printedAt: String?,
     val items: List<OrderItem>
 )
 
@@ -134,10 +158,13 @@ private fun RestaurantTabletApp() {
 
     var settings by remember { mutableStateOf(settingsStore.load()) }
     var screen by remember { mutableStateOf(if (settings.canOpenDashboard()) Screen.Dashboard else Screen.Setup) }
+    var restaurant by remember { mutableStateOf(RestaurantInfo(name = "Restaurant ${settings.restaurantId.ifBlank { "1" }}")) }
     var orders by remember { mutableStateOf(if (settings.mockMode) sampleOrders() else emptyList()) }
     var selectedOrder by remember { mutableStateOf<Order?>(null) }
     var alertOrder by remember { mutableStateOf<Order?>(null) }
     var viewedPendingIds by remember { mutableStateOf(setOf<String>()) }
+    var selectedFilter by remember { mutableStateOf(OrderFilter.All) }
+    var soundEnabled by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf("") }
 
@@ -153,13 +180,15 @@ private fun RestaurantTabletApp() {
                 statusMessage = "Refreshing orders..."
             }
 
-            val freshOrders = if (settings.mockMode) {
-                mergeOrders(sampleOrders(), orders)
+            if (settings.mockMode) {
+                restaurant = RestaurantInfo(id = settings.restaurantId, name = "Joe's Pizza", slug = "joes-pizza")
+                orders = mergeOrders(sampleOrders(), orders).sortedByDescending { it.createdAt }
             } else {
-                mergeOrders(ApiClient(settings).fetchPendingOrders(), orders)
+                val api = ApiClient(settings)
+                restaurant = api.fetchRestaurantInfo()
+                orders = mergeOrders(api.fetchOrders(), orders).sortedByDescending { it.createdAt }
             }
 
-            orders = freshOrders.sortedByDescending { it.createdAt }
             statusMessage = if (quiet) statusMessage else "Orders updated."
             errorMessage = ""
         } catch (err: Exception) {
@@ -194,8 +223,8 @@ private fun RestaurantTabletApp() {
         }
     }
 
-    LaunchedEffect(alertOrder?.id) {
-        if (alertOrder == null) {
+    LaunchedEffect(alertOrder?.id, soundEnabled) {
+        if (alertOrder == null || !soundEnabled) {
             return@LaunchedEffect
         }
 
@@ -208,6 +237,7 @@ private fun RestaurantTabletApp() {
     fun saveSettings(newSettings: AppSettings) {
         settingsStore.save(newSettings)
         settings = newSettings
+        restaurant = RestaurantInfo(id = newSettings.restaurantId, name = "Restaurant ${newSettings.restaurantId}")
         orders = if (newSettings.mockMode) sampleOrders() else emptyList()
         selectedOrder = null
         alertOrder = null
@@ -220,7 +250,6 @@ private fun RestaurantTabletApp() {
         scope.launch {
             try {
                 statusMessage = "Accepting order #${order.id}..."
-
                 val acceptedOrder = if (settings.mockMode) {
                     order.copy(status = "ACCEPTED")
                 } else {
@@ -231,6 +260,7 @@ private fun RestaurantTabletApp() {
                 selectedOrder = null
                 alertOrder = null
                 viewedPendingIds = viewedPendingIds + order.id
+                selectedFilter = OrderFilter.InProgress
                 statusMessage = "Accepted order #${order.id}."
 
                 if (settings.printerIp.isNotBlank()) {
@@ -254,7 +284,6 @@ private fun RestaurantTabletApp() {
         scope.launch {
             try {
                 statusMessage = "Declining order #${order.id}..."
-
                 val declinedOrder = if (settings.mockMode) {
                     order.copy(status = "CANCELLED")
                 } else {
@@ -265,6 +294,7 @@ private fun RestaurantTabletApp() {
                 selectedOrder = null
                 alertOrder = null
                 viewedPendingIds = viewedPendingIds + order.id
+                selectedFilter = OrderFilter.Cancelled
                 statusMessage = "Declined order #${order.id}."
             } catch (err: Exception) {
                 errorMessage = "Could not decline order: ${err.message}"
@@ -272,7 +302,7 @@ private fun RestaurantTabletApp() {
         }
     }
 
-    Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFFF3F6F8)) {
+    Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFFEEF2F4)) {
         when (screen) {
             Screen.Setup -> SetupScreen(
                 settings = settings,
@@ -283,7 +313,7 @@ private fun RestaurantTabletApp() {
                     if (settings.canOpenDashboard()) {
                         screen = Screen.Dashboard
                     } else {
-                        errorMessage = "Add API settings or turn on mock mode first."
+                        errorMessage = "Add API URL, restaurant ID, and agent token, or turn on debug mock mode."
                     }
                 },
                 onOpenPrinter = { screen = Screen.Printer }
@@ -310,10 +340,19 @@ private fun RestaurantTabletApp() {
 
             Screen.Dashboard -> DashboardScreen(
                 settings = settings,
+                restaurant = restaurant,
                 orders = orders,
                 selectedOrder = selectedOrder,
+                selectedFilter = selectedFilter,
+                soundEnabled = soundEnabled,
                 statusMessage = statusMessage,
                 errorMessage = errorMessage,
+                onSelectFilter = { selectedFilter = it },
+                onEnableSound = {
+                    soundEnabled = true
+                    toneGenerator.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 250)
+                    statusMessage = "Sound alerts are enabled."
+                },
                 onRefresh = { scope.launch { refreshOrders() } },
                 onOpenSetup = { screen = Screen.Setup },
                 onOpenPrinter = { screen = Screen.Printer },
@@ -338,6 +377,7 @@ private fun RestaurantTabletApp() {
                 onTap = {
                     viewedPendingIds = viewedPendingIds + currentAlertOrder.id
                     selectedOrder = currentAlertOrder
+                    selectedFilter = OrderFilter.Pending
                     alertOrder = null
                 }
             )
@@ -354,20 +394,20 @@ private fun SetupScreen(
     onOpenDashboard: () -> Unit,
     onOpenPrinter: () -> Unit
 ) {
-    var apiUrl by remember(settings) { mutableStateOf(settings.apiUrl) }
-    var restaurantId by remember(settings) { mutableStateOf(settings.restaurantId) }
+    var apiUrl by remember(settings) { mutableStateOf(settings.apiUrl.ifBlank { "http://10.0.2.2:3000" }) }
+    var restaurantId by remember(settings) { mutableStateOf(settings.restaurantId.ifBlank { "1" }) }
     var agentToken by remember(settings) { mutableStateOf(settings.agentToken) }
     var mockMode by remember(settings) { mutableStateOf(settings.mockMode) }
     var printerIp by remember(settings) { mutableStateOf(settings.printerIp) }
     var printerPort by remember(settings) { mutableStateOf(settings.printerPort) }
 
-    PageShell(scroll = false) {
-        Text("Restaurant Tablet Setup", fontSize = 34.sp, fontWeight = FontWeight.Black)
-        Text("Save the backend and restaurant settings for this tablet.", color = Color(0xFF526173), fontWeight = FontWeight.Bold)
+    PageShell(scroll = true) {
+        Text("Restaurant Tablet Setup", fontSize = 34.sp, fontWeight = FontWeight.Black, color = Ink)
+        Text("Use http://10.0.2.2:3000 when the backend is running on your Mac and the app is in the Android emulator.", color = Muted, fontWeight = FontWeight.Bold)
         MessageBlock(statusMessage, errorMessage)
 
         CardPanel {
-            OutlinedTextField(value = apiUrl, onValueChange = { apiUrl = it }, label = { Text("Backend API URL") }, placeholder = { Text("http://192.168.1.20:3000") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = apiUrl, onValueChange = { apiUrl = it }, label = { Text("Backend API URL") }, placeholder = { Text("http://10.0.2.2:3000") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = restaurantId, onValueChange = { restaurantId = it }, label = { Text("Restaurant ID") }, placeholder = { Text("1") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = agentToken, onValueChange = { agentToken = it }, label = { Text("Agent Token") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = printerIp, onValueChange = { printerIp = it }, label = { Text("Printer IP Address") }, placeholder = { Text("192.168.1.45") }, modifier = Modifier.fillMaxWidth())
@@ -375,15 +415,15 @@ private fun SetupScreen(
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = mockMode, onCheckedChange = { mockMode = it })
-                Text("Use mock mode while backend routes are not ready", fontWeight = FontWeight.Bold)
+                Text("Debug mock mode only", fontWeight = FontWeight.Bold, color = Ink)
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 PrimaryButton("Save Settings") {
                     onSave(AppSettings(apiUrl, restaurantId, agentToken, mockMode, printerIp, printerPort.ifBlank { "9100" }))
                 }
-                SecondaryButton("Open Dashboard", onOpenDashboard)
-                SecondaryButton("Printer Settings", onOpenPrinter)
+                DarkButton("Open Dashboard", onOpenDashboard)
+                DarkButton("Printer Settings", onOpenPrinter)
             }
         }
     }
@@ -392,10 +432,15 @@ private fun SetupScreen(
 @Composable
 private fun DashboardScreen(
     settings: AppSettings,
+    restaurant: RestaurantInfo,
     orders: List<Order>,
     selectedOrder: Order?,
+    selectedFilter: OrderFilter,
+    soundEnabled: Boolean,
     statusMessage: String,
     errorMessage: String,
+    onSelectFilter: (OrderFilter) -> Unit,
+    onEnableSound: () -> Unit,
     onRefresh: () -> Unit,
     onOpenSetup: () -> Unit,
     onOpenPrinter: () -> Unit,
@@ -405,9 +450,6 @@ private fun DashboardScreen(
     onDecline: (Order) -> Unit,
     onAddMockOrder: () -> Unit
 ) {
-    val pendingOrders = orders.filter { it.status == "PENDING" }
-    val acceptedOrders = orders.filter { it.status == "ACCEPTED" }
-
     if (selectedOrder != null) {
         OrderDetailScreen(
             order = selectedOrder,
@@ -418,155 +460,288 @@ private fun DashboardScreen(
         return
     }
 
-    PageShell(scroll = false) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column {
-                Text("Live Orders", fontSize = 38.sp, fontWeight = FontWeight.Black)
-                Text("Restaurant ${settings.restaurantId.ifBlank { "mock" }} - refreshes every 3 seconds", color = Color(0xFF526173), fontWeight = FontWeight.Bold)
-            }
+    val activeCount = orders.count { it.status == "PENDING" || it.status == "ACCEPTED" }
+    val filteredOrders = orders.filter { selectedFilter.status == null || it.status == selectedFilter.status }
+    val menuUrl = "${settings.apiUrl.trimEnd('/')}/r/${restaurant.slug.ifBlank { "joes-pizza" }}"
 
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (settings.mockMode) {
-                    SecondaryButton("Add Mock Order", onAddMockOrder)
-                }
-                SecondaryButton("Refresh", onRefresh)
-                SecondaryButton("Printer", onOpenPrinter)
-                SecondaryButton("Setup", onOpenSetup)
-            }
-        }
+    Column(modifier = Modifier.fillMaxSize().background(PageBackground)) {
+        LiveHeader(
+            restaurantName = restaurant.name,
+            activeCount = activeCount,
+            soundEnabled = soundEnabled,
+            hasPending = orders.any { it.status == "PENDING" },
+            onEnableSound = onEnableSound,
+            onOpenSetup = onOpenSetup,
+            onOpenPrinter = onOpenPrinter,
+            onRefresh = onRefresh,
+            onAddMockOrder = if (settings.mockMode) onAddMockOrder else null
+        )
 
-        MessageBlock(statusMessage, errorMessage)
+        FilterTabs(
+            orders = orders,
+            selectedFilter = selectedFilter,
+            onSelectFilter = onSelectFilter
+        )
 
-        Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            OrderColumn(
-                title = "Pending",
-                orders = pendingOrders,
-                modifier = Modifier.weight(1f),
-                accentColor = Color(0xFFF59E0B),
-                onOpenOrder = onOpenOrder
-            )
+        OnlineMenuCard(menuUrl = menuUrl)
 
-            OrderColumn(
-                title = "Accepted / Ready",
-                orders = acceptedOrders,
-                modifier = Modifier.weight(1f),
-                accentColor = Color(0xFF0F766E),
-                onOpenOrder = onOpenOrder
-            )
-        }
-    }
-}
+        MessageBlock(statusMessage, errorMessage, modifier = Modifier.padding(horizontal = 18.dp))
 
-@Composable
-private fun OrderColumn(
-    title: String,
-    orders: List<Order>,
-    modifier: Modifier,
-    accentColor: Color,
-    onOpenOrder: (Order) -> Unit
-) {
-    Card(
-        modifier = modifier.fillMaxHeight(),
-        shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White)
-    ) {
-        Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(modifier = Modifier.size(14.dp).background(accentColor, RoundedCornerShape(20.dp)))
-                Spacer(Modifier.width(10.dp))
-                Text("$title (${orders.size})", fontSize = 24.sp, fontWeight = FontWeight.Black)
-            }
-
-            if (orders.isEmpty()) {
-                Text("No orders here.", color = Color(0xFF6B7280), fontWeight = FontWeight.Bold)
-            } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(orders) { order ->
-                        OrderListCard(order = order, onClick = { onOpenOrder(order) })
+        LazyRow(
+            modifier = Modifier.fillMaxSize().padding(start = 18.dp, top = 12.dp, bottom = 18.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            if (filteredOrders.isEmpty()) {
+                item {
+                    Box(modifier = Modifier.width(380.dp).fillMaxHeight().background(Color.White, RoundedCornerShape(8.dp)).padding(18.dp)) {
+                        Text("No orders match this filter.", color = Muted, fontWeight = FontWeight.Bold)
                     }
                 }
+            } else {
+                items(filteredOrders) { order ->
+                    WebsiteOrderCard(order = order, onClick = { onOpenOrder(order) })
+                }
             }
         }
     }
 }
 
 @Composable
-private fun OrderListCard(order: Order, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC))
+private fun LiveHeader(
+    restaurantName: String,
+    activeCount: Int,
+    soundEnabled: Boolean,
+    hasPending: Boolean,
+    onEnableSound: () -> Unit,
+    onOpenSetup: () -> Unit,
+    onOpenPrinter: () -> Unit,
+    onRefresh: () -> Unit,
+    onAddMockOrder: (() -> Unit)?
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().background(Color.White).padding(18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(18.dp)
     ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Order #${order.id}", fontWeight = FontWeight.Black)
-                Text(order.status, fontWeight = FontWeight.Black, color = statusColor(order.status))
-            }
-            Text(order.customerName, fontSize = 22.sp, fontWeight = FontWeight.Black)
-            Text(order.customerPhone, color = Color(0xFF526173), fontWeight = FontWeight.Bold)
-            Text("${order.fulfillmentType} - ${money(order.total)}", fontWeight = FontWeight.Black)
+        HamburgerButton(onOpenSetup)
+        Column(modifier = Modifier.weight(1f)) {
+            Text("LIVE ORDERS", color = Muted, fontSize = 18.sp, fontWeight = FontWeight.Black)
+            Text(restaurantName, color = Ink, fontSize = 56.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("$activeCount active orders", color = Muted, fontSize = 21.sp, fontWeight = FontWeight.Black)
         }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (onAddMockOrder != null) {
+                DarkButton("Add Mock Order", onAddMockOrder)
+            }
+            DarkButton("Refresh", onRefresh)
+            DarkButton("Printer", onOpenPrinter)
+            Button(
+                onClick = onEnableSound,
+                colors = ButtonDefaults.buttonColors(containerColor = if (soundEnabled) Muted else Orange),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.height(66.dp)
+            ) {
+                Text(if (soundEnabled) "Sound Alerts On" else "Enable Sound Alerts", fontSize = 20.sp, fontWeight = FontWeight.Black)
+            }
+            Text(if (hasPending) "Pending alert active" else "No pending alerts", color = Muted, fontSize = 18.sp, fontWeight = FontWeight.Black)
+        }
+    }
+}
+
+@Composable
+private fun HamburgerButton(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier.size(78.dp).background(Dark, RoundedCornerShape(8.dp)).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            repeat(3) {
+                Box(modifier = Modifier.width(42.dp).height(5.dp).background(Color.White, RoundedCornerShape(999.dp)))
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterTabs(orders: List<Order>, selectedFilter: OrderFilter, onSelectFilter: (OrderFilter) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().background(PageBackground).horizontalScroll(rememberScrollState()).padding(18.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        OrderFilter.values().forEach { filter ->
+            val count = orders.count { filter.status == null || it.status == filter.status }
+            FilterButton(filter, count, filter == selectedFilter) { onSelectFilter(filter) }
+        }
+    }
+}
+
+@Composable
+private fun FilterButton(filter: OrderFilter, count: Int, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .height(72.dp)
+            .background(if (selected) Teal else Color.White, RoundedCornerShape(8.dp))
+            .border(2.dp, if (selected) Teal else Border, RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Text(filter.label, color = if (selected) Color.White else Ink, fontSize = 22.sp, fontWeight = FontWeight.Black)
+        Box(
+            modifier = Modifier.size(38.dp).background(if (selected) Color.White else BadgeBackground, RoundedCornerShape(999.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("$count", color = if (selected) Teal else Muted, fontSize = 18.sp, fontWeight = FontWeight.Black)
+        }
+    }
+}
+
+@Composable
+private fun OnlineMenuCard(menuUrl: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().background(Color.White).border(1.dp, Border).padding(horizontal = 18.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("ONLINE MENU", color = Muted, fontSize = 16.sp, fontWeight = FontWeight.Black)
+            Text(menuUrl, color = Ink, fontSize = 21.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            PrimaryButton("Copy Link") {}
+            DarkButton("Open Public Menu") {}
+        }
+    }
+}
+
+@Composable
+private fun WebsiteOrderCard(order: Order, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.width(380.dp).fillMaxHeight().clickable(onClick = onClick),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(modifier = Modifier.fillMaxSize().border(2.dp, statusBorderColor(order.status), RoundedCornerShape(8.dp)).padding(16.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("ORDER #${order.id}", color = Muted, fontSize = 17.sp, fontWeight = FontWeight.Black)
+                    Text(order.customerName, color = Ink, fontSize = 25.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(order.customerPhone, color = Muted, fontSize = 21.sp, fontWeight = FontWeight.Black)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    StatusBadge(order.status)
+                    Text(formatOrderTime(order.createdAt), color = Muted, fontSize = 18.sp, fontWeight = FontWeight.Black)
+                }
+            }
+
+            if (order.notes.isNotBlank()) {
+                Box(modifier = Modifier.fillMaxWidth().padding(top = 18.dp).background(NoteBackground, RoundedCornerShape(7.dp)).padding(12.dp)) {
+                    Text(order.notes, color = Muted, fontSize = 18.sp, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            } else {
+                Spacer(Modifier.height(18.dp))
+            }
+
+            Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                order.items.forEach { item ->
+                    TicketItem(item)
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth().border(1.dp, Border.copy(alpha = 0.6f), RoundedCornerShape(0.dp)).padding(top = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Total", color = Ink, fontSize = 24.sp, fontWeight = FontWeight.Black)
+                Text(money(order.total), color = Ink, fontSize = 24.sp, fontWeight = FontWeight.Black)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TicketItem(item: OrderItem) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 9.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("${item.quantity} x ${item.name}", color = Ink, fontSize = 19.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+            Text(money(item.price * item.quantity), color = Ink, fontSize = 17.sp)
+        }
+        item.modifiers.forEach { modifier ->
+            Text("•  $modifier", color = Muted, fontSize = 17.sp, modifier = Modifier.padding(start = 4.dp, top = 2.dp))
+        }
+        if (item.notes.isNotBlank()) {
+            Text("Comment: ${item.notes}", color = Muted, fontSize = 17.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 4.dp))
+        }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Border).padding(top = 8.dp))
+    }
+}
+
+@Composable
+private fun StatusBadge(status: String) {
+    val background = when (status) {
+        "PENDING" -> Color(0xFFFFF3CD)
+        "ACCEPTED" -> Color(0xFFDCFCE7)
+        "COMPLETED" -> Color(0xFFDBEAFE)
+        "CANCELLED" -> Color(0xFFFEE2E2)
+        else -> BadgeBackground
+    }
+    Box(modifier = Modifier.background(background, RoundedCornerShape(999.dp)).padding(horizontal = 12.dp, vertical = 7.dp)) {
+        Text(status, color = statusColor(status), fontSize = 15.sp, fontWeight = FontWeight.Black)
     }
 }
 
 @Composable
 private fun OrderDetailScreen(order: Order, onBack: () -> Unit, onAccept: () -> Unit, onDecline: () -> Unit) {
-    PageShell {
+    PageShell(scroll = false) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column {
-                Text("Order #${order.id}", fontSize = 34.sp, fontWeight = FontWeight.Black)
-                Text(order.status, color = statusColor(order.status), fontWeight = FontWeight.Black)
+                Text("ORDER #${order.id}", color = Muted, fontSize = 18.sp, fontWeight = FontWeight.Black)
+                Text(order.customerName, fontSize = 44.sp, color = Ink, fontWeight = FontWeight.Black)
+                Text(order.customerPhone, fontSize = 24.sp, color = Muted, fontWeight = FontWeight.Black)
             }
-            SecondaryButton("Back", onBack)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                StatusBadge(order.status)
+                DarkButton("Back to Dashboard", onBack)
+            }
         }
 
-        CardPanel {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(order.customerName, fontSize = 30.sp, fontWeight = FontWeight.Black)
-                    Text(order.customerPhone, fontSize = 20.sp, color = Color(0xFF526173), fontWeight = FontWeight.Bold)
-                    Text("${order.orderType} - ${order.fulfillmentType}", fontWeight = FontWeight.Black)
-                    Text("Placed: ${formatOrderTime(order.createdAt)}", color = Color(0xFF526173), fontWeight = FontWeight.Bold)
-                }
-                Text(money(order.total), fontSize = 34.sp, fontWeight = FontWeight.Black)
-            }
-
+        CardPanel(modifier = Modifier.weight(1f)) {
             if (order.notes.isNotBlank()) {
-                Box(modifier = Modifier.fillMaxWidth().background(Color(0xFFFFF7ED), RoundedCornerShape(8.dp)).padding(14.dp)) {
-                    Text("Notes: ${order.notes}", fontWeight = FontWeight.Bold)
+                Box(modifier = Modifier.fillMaxWidth().background(NoteBackground, RoundedCornerShape(8.dp)).padding(16.dp)) {
+                    Text(order.notes, fontSize = 21.sp, color = Muted, fontWeight = FontWeight.Black)
                 }
             }
 
-            LazyColumn(modifier = Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(order.items) { item ->
-                    Column(modifier = Modifier.fillMaxWidth().background(Color(0xFFF8FAFC), RoundedCornerShape(8.dp)).padding(14.dp)) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("${item.quantity} x ${item.name}", fontSize = 21.sp, fontWeight = FontWeight.Black)
-                            Text(money(item.price * item.quantity), fontWeight = FontWeight.Black)
-                        }
-                        item.modifiers.forEach { modifier ->
-                            Text("  - $modifier", color = Color(0xFF526173), fontWeight = FontWeight.Bold)
-                        }
-                        if (item.notes.isNotBlank()) {
-                            Text("Item note: ${item.notes}", color = Color(0xFF92400E), fontWeight = FontWeight.Bold)
-                        }
-                    }
+                    TicketItem(item)
                 }
+            }
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Total", fontSize = 30.sp, color = Ink, fontWeight = FontWeight.Black)
+                Text(money(order.total), fontSize = 30.sp, color = Ink, fontWeight = FontWeight.Black)
             }
 
             if (order.status == "PENDING") {
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
                     Button(
                         onClick = onAccept,
-                        modifier = Modifier.weight(1f).height(74.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F766E))
+                        modifier = Modifier.weight(1f).height(76.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Teal),
+                        shape = RoundedCornerShape(8.dp)
                     ) {
                         Text("Accept Order", fontSize = 22.sp, fontWeight = FontWeight.Black)
                     }
                     Button(
                         onClick = onDecline,
-                        modifier = Modifier.weight(1f).height(74.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB42318))
+                        modifier = Modifier.weight(1f).height(76.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Danger),
+                        shape = RoundedCornerShape(8.dp)
                     ) {
                         Text("Decline Order", fontSize = 22.sp, fontWeight = FontWeight.Black)
                     }
@@ -589,8 +764,8 @@ private fun PrinterSettingsScreen(
     var printerPort by remember(settings) { mutableStateOf(settings.printerPort.ifBlank { "9100" }) }
 
     PageShell {
-        Text("Printer Settings", fontSize = 34.sp, fontWeight = FontWeight.Black)
-        Text("Use a Wi-Fi or Ethernet ESC/POS printer on your local network.", color = Color(0xFF526173), fontWeight = FontWeight.Bold)
+        Text("Printer Settings", fontSize = 34.sp, color = Ink, fontWeight = FontWeight.Black)
+        Text("Use a Wi-Fi or Ethernet ESC/POS printer on your local network.", color = Muted, fontWeight = FontWeight.Bold)
         MessageBlock(statusMessage, errorMessage)
 
         CardPanel {
@@ -601,8 +776,8 @@ private fun PrinterSettingsScreen(
                 PrimaryButton("Save Printer") {
                     onSave(settings.copy(printerIp = printerIp, printerPort = printerPort.ifBlank { "9100" }))
                 }
-                SecondaryButton("Test Print", onTestPrint)
-                SecondaryButton("Back", onBack)
+                DarkButton("Test Print", onTestPrint)
+                DarkButton("Back", onBack)
             }
         }
     }
@@ -617,86 +792,65 @@ private fun NewOrderOverlay(pendingCount: Int, onTap: () -> Unit) {
         animationSpec = infiniteRepeatable(animation = tween(650), repeatMode = RepeatMode.Reverse),
         label = "flash"
     )
-    val background = if (flash > 0.5f) Color(0xFFFFA000) else Color(0xFFB42318)
+    val background = if (flash > 0.5f) Orange else Danger
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(background)
-            .clickable(onClick = onTap)
-            .padding(28.dp),
+        modifier = Modifier.fillMaxSize().background(background).clickable(onClick = onTap).padding(28.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            Text(
-                "$pendingCount new order${if (pendingCount == 1) "" else "s"}",
-                color = Color.White,
-                fontSize = 30.sp,
-                fontWeight = FontWeight.Black
-            )
-            Text(
-                "NEW ORDER",
-                color = Color.White,
-                fontSize = 86.sp,
-                fontWeight = FontWeight.Black,
-                textAlign = TextAlign.Center,
-                lineHeight = 84.sp
-            )
+            Text("$pendingCount new order${if (pendingCount == 1) "" else "s"}", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black)
+            Text("NEW ORDER", color = Color.White, fontSize = 86.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, lineHeight = 84.sp)
             Text("Tap anywhere to view", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black)
         }
     }
 }
 
 @Composable
-private fun PageShell(scroll: Boolean = true, content: @Composable Column.() -> Unit) {
-    val scrollModifier = if (scroll) {
-        Modifier.verticalScroll(rememberScrollState())
-    } else {
-        Modifier
-    }
+private fun PageShell(scroll: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
+    val scrollModifier = if (scroll) Modifier.verticalScroll(rememberScrollState()) else Modifier
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(22.dp)
-            .then(scrollModifier),
+        modifier = Modifier.fillMaxSize().background(PageBackground).padding(22.dp).then(scrollModifier),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         content = content
     )
 }
 
 @Composable
-private fun CardPanel(content: @Composable Column.() -> Unit) {
+private fun CardPanel(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White)
     ) {
-        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp), content = content)
+        Column(modifier = Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp), content = content)
     }
 }
 
 @Composable
 private fun PrimaryButton(text: String, onClick: () -> Unit) {
-    Button(onClick = onClick, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F766E))) {
+    Button(onClick = onClick, colors = ButtonDefaults.buttonColors(containerColor = Teal), shape = RoundedCornerShape(8.dp)) {
         Text(text, fontWeight = FontWeight.Black)
     }
 }
 
 @Composable
-private fun SecondaryButton(text: String, onClick: () -> Unit) {
-    Button(onClick = onClick, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF17202A))) {
+private fun DarkButton(text: String, onClick: () -> Unit) {
+    Button(onClick = onClick, colors = ButtonDefaults.buttonColors(containerColor = Dark), shape = RoundedCornerShape(8.dp)) {
         Text(text, fontWeight = FontWeight.Black)
     }
 }
 
 @Composable
-private fun MessageBlock(statusMessage: String, errorMessage: String) {
-    if (statusMessage.isNotBlank()) {
-        Text(statusMessage, color = Color(0xFF14532D), fontWeight = FontWeight.Bold)
-    }
-    if (errorMessage.isNotBlank()) {
-        Text(errorMessage, color = Color(0xFFB42318), fontWeight = FontWeight.Bold)
+private fun MessageBlock(statusMessage: String, errorMessage: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (statusMessage.isNotBlank()) {
+            Text(statusMessage, color = Color(0xFF14532D), fontWeight = FontWeight.Bold)
+        }
+        if (errorMessage.isNotBlank()) {
+            Text(errorMessage, color = Danger, fontWeight = FontWeight.Bold)
+        }
     }
 }
 
@@ -705,10 +859,10 @@ private class SettingsStore(context: Context) {
 
     fun load(): AppSettings {
         return AppSettings(
-            apiUrl = prefs.getString("apiUrl", "") ?: "",
-            restaurantId = prefs.getString("restaurantId", "") ?: "",
+            apiUrl = prefs.getString("apiUrl", "http://10.0.2.2:3000") ?: "http://10.0.2.2:3000",
+            restaurantId = prefs.getString("restaurantId", "1") ?: "1",
             agentToken = prefs.getString("agentToken", "") ?: "",
-            mockMode = prefs.getBoolean("mockMode", true),
+            mockMode = prefs.getBoolean("mockMode", false),
             printerIp = prefs.getString("printerIp", "") ?: "",
             printerPort = prefs.getString("printerPort", "9100") ?: "9100"
         )
@@ -727,49 +881,55 @@ private class SettingsStore(context: Context) {
 }
 
 private class ApiClient(private val settings: AppSettings) {
-    suspend fun fetchPendingOrders(): List<Order> {
-        val body = request("/api/restaurant/${settings.restaurantId}/orders/pending", "GET")
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
+        .build()
+
+    suspend fun fetchRestaurantInfo(): RestaurantInfo {
+        val body = request("/api/restaurants/${settings.restaurantId}/live-orders-info", "GET")
+        return parseRestaurant(JSONObject(body))
+    }
+
+    suspend fun fetchOrders(): List<Order> {
+        val body = request("/api/restaurants/${settings.restaurantId}/orders", "GET")
         return parseOrders(body)
     }
 
     suspend fun acceptOrder(orderId: String): Order {
-        val body = request("/api/orders/$orderId/accept", "POST")
+        val body = request("/api/orders/$orderId/accept", "PATCH")
         return parseOrder(JSONObject(body))
     }
 
     suspend fun declineOrder(orderId: String): Order {
-        val body = request("/api/orders/$orderId/decline", "POST")
+        val body = request("/api/orders/$orderId/decline", "PATCH")
         return parseOrder(JSONObject(body))
     }
 
     suspend fun markPrinted(orderId: String) {
-        request("/api/orders/$orderId/printed", "POST")
+        request("/api/orders/$orderId/printed", "PATCH")
     }
 
     private suspend fun request(path: String, method: String): String = withContext(Dispatchers.IO) {
-        val baseUrl = settings.apiUrl.trimEnd('/')
-        val connection = (URL("$baseUrl$path").openConnection() as HttpURLConnection).apply {
-            requestMethod = method
-            connectTimeout = 8_000
-            readTimeout = 8_000
-            setRequestProperty("Authorization", "Bearer ${settings.agentToken}")
-            setRequestProperty("Accept", "application/json")
-            if (method == "POST") {
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json")
-                outputStream.use { it.write(ByteArray(0)) }
+        val body = if (method == "PATCH" || method == "POST") {
+            "{}".toRequestBody("application/json".toMediaType())
+        } else {
+            null
+        }
+        val request = Request.Builder()
+            .url("${settings.apiUrl.trimEnd('/')}$path")
+            .method(method, body)
+            .header("Authorization", "Bearer ${settings.agentToken}")
+            .header("Accept", "application/json")
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            val responseBody = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IllegalStateException("HTTP ${response.code} ${responseBody.ifBlank { "Request failed" }}")
             }
+            responseBody
         }
-
-        val responseCode = connection.responseCode
-        val stream = if (responseCode in 200..299) connection.inputStream else connection.errorStream
-        val responseBody = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-
-        if (responseCode !in 200..299) {
-            throw IllegalStateException("HTTP $responseCode ${responseBody.ifBlank { "Request failed" }}")
-        }
-
-        responseBody
     }
 }
 
@@ -793,28 +953,19 @@ private object EscPosPrinter {
             appendLine(order.customerName)
             appendLine(order.customerPhone)
             appendLine("${order.orderType} - ${order.fulfillmentType}")
-            if (order.notes.isNotBlank()) {
-                appendLine("NOTES: ${order.notes}")
-            }
+            if (order.notes.isNotBlank()) appendLine("NOTES: ${order.notes}")
             appendLine("------------------------------")
             order.items.forEach { item ->
                 appendLine("${item.quantity} x ${item.name}")
-                item.modifiers.forEach { modifier ->
-                    appendLine("  - $modifier")
-                }
-                if (item.notes.isNotBlank()) {
-                    appendLine("  Note: ${item.notes}")
-                }
+                item.modifiers.forEach { modifier -> appendLine("  - $modifier") }
+                if (item.notes.isNotBlank()) appendLine("  Note: ${item.notes}")
             }
             appendLine("------------------------------")
             appendLine("TOTAL ${money(order.total)}")
             appendLine("\n\n")
         }
 
-        val bytes = byteArrayOf(0x1B, 0x40) +
-            ticketText.toByteArray(Charsets.UTF_8) +
-            byteArrayOf(0x1D, 0x56, 0x00)
-
+        val bytes = byteArrayOf(0x1B, 0x40) + ticketText.toByteArray(Charsets.UTF_8) + byteArrayOf(0x1D, 0x56, 0x00)
         send(settings, bytes)
     }
 
@@ -830,6 +981,15 @@ private object EscPosPrinter {
     }
 }
 
+private fun parseRestaurant(json: JSONObject): RestaurantInfo {
+    return RestaurantInfo(
+        id = jsonId(json),
+        name = json.optString("name", "Restaurant"),
+        slug = json.optString("slug", ""),
+        themeColor = json.optString("themeColor", "#0f766e")
+    )
+}
+
 private fun parseOrders(body: String): List<Order> {
     val trimmed = body.trim()
     val array = when {
@@ -840,14 +1000,13 @@ private fun parseOrders(body: String): List<Order> {
         }
         else -> JSONArray()
     }
-
     return List(array.length()) { index -> parseOrder(array.getJSONObject(index)) }
 }
 
 private fun parseOrder(json: JSONObject): Order {
     val itemsJson = json.optJSONArray("items") ?: JSONArray()
     return Order(
-        id = json.opt("id").toString(),
+        id = jsonId(json),
         customerName = json.optString("customerName", "Guest"),
         customerPhone = json.optString("customerPhone", ""),
         orderType = json.optString("orderType", "Online"),
@@ -856,8 +1015,16 @@ private fun parseOrder(json: JSONObject): Order {
         status = json.optString("status", "PENDING"),
         total = json.optDouble("total", json.optDouble("subtotal", 0.0)),
         createdAt = json.optString("createdAt", Date().time.toString()),
+        printedAt = json.optString("printedAt").takeIf { it.isNotBlank() && it != "null" },
         items = List(itemsJson.length()) { index -> parseOrderItem(itemsJson.getJSONObject(index)) }
     )
+}
+
+private fun jsonId(json: JSONObject): String {
+    return json.optString("id").ifBlank {
+        val id = json.optLong("id", -1)
+        if (id >= 0) id.toString() else ""
+    }
 }
 
 private fun parseOrderItem(json: JSONObject): OrderItem {
@@ -867,7 +1034,9 @@ private fun parseOrderItem(json: JSONObject): OrderItem {
         if (modifier is JSONObject) {
             val groupName = modifier.optString("groupName", modifier.optString("name", "Modifier"))
             val optionName = modifier.optString("optionName", modifier.optString("value", ""))
-            "$groupName: $optionName".trimEnd(':', ' ')
+            val priceDelta = modifier.optString("priceDelta", "")
+            val priceText = priceDelta.takeIf { it.isNotBlank() && it != "0" && it != "0.00" }?.let { " +${money(it.toDoubleOrNull() ?: 0.0)}" } ?: ""
+            "$groupName: $optionName$priceText".trimEnd(':', ' ')
         } else {
             modifier.toString()
         }
@@ -886,48 +1055,49 @@ private fun mergeOrders(freshOrders: List<Order>, currentOrders: List<Order>): L
     val freshIds = freshOrders.map { it.id }.toSet()
     val currentById = currentOrders.associateBy { it.id }
     val mergedFreshOrders = freshOrders.map { freshOrder ->
-        currentById[freshOrder.id]?.takeIf { it.status != "PENDING" } ?: freshOrder
+        currentById[freshOrder.id]?.takeIf { it.status != "PENDING" && freshOrder.status == "PENDING" } ?: freshOrder
     }
-    val localOnlyOrders = currentOrders.filter { it.id !in freshIds }
+    val localOnlyOrders = currentOrders.filter { it.id !in freshIds && it.status != "PENDING" }
     return mergedFreshOrders + localOnlyOrders
 }
 
 private fun updateOrderInList(orders: List<Order>, updatedOrder: Order): List<Order> {
-    return orders.map { if (it.id == updatedOrder.id) updatedOrder else it }
+    return if (orders.any { it.id == updatedOrder.id }) {
+        orders.map { if (it.id == updatedOrder.id) updatedOrder else it }
+    } else {
+        listOf(updatedOrder) + orders
+    }
 }
 
 private fun sampleOrders(): List<Order> {
     return listOf(
         Order(
-            id = "1001",
-            customerName = "Maya Chen",
-            customerPhone = "555-0101",
+            id = "17",
+            customerName = "Grant",
+            customerPhone = "9999999",
             orderType = "Online",
             fulfillmentType = "Pickup",
-            notes = "Please include extra napkins.",
-            status = "PENDING",
-            total = 32.75,
-            createdAt = "2026-06-12T12:05:00Z",
-            items = listOf(
-                OrderItem("Spicy Tuna Roll", 2, 8.50, listOf("Sauce: Spicy mayo"), ""),
-                OrderItem("Chicken Bento", 1, 15.75, listOf("Side: Miso soup"), "No onions")
-            )
+            notes = "Test order",
+            status = "ACCEPTED",
+            total = 8.50,
+            createdAt = "2026-06-12T17:23:00Z",
+            printedAt = null,
+            items = listOf(OrderItem("House Salad", 1, 8.50, emptyList(), ""))
         ),
         Order(
-            id = "1000",
-            customerName = "Jordan Lee",
-            customerPhone = "555-0144",
+            id = "16",
+            customerName = "Grant",
+            customerPhone = "323",
             orderType = "Online",
-            fulfillmentType = "Delivery",
-            notes = "Call when arriving.",
+            fulfillmentType = "Pickup",
+            notes = "",
             status = "ACCEPTED",
-            total = 18.25,
-            createdAt = "2026-06-12T11:55:00Z",
-            items = listOf(
-                OrderItem("California Roll", 1, 7.25, emptyList(), ""),
-                OrderItem("Miso Soup", 2, 5.50, emptyList(), "")
-            )
-        )
+            total = 18.24,
+            createdAt = "2026-06-12T17:23:00Z",
+            printedAt = null,
+            items = listOf(OrderItem("Pepperoni Pizza", 1, 18.24, listOf("Choose Size: Medium +$2.00", "Toppings: Extra Cheese +$1.25"), ""))
+        ),
+        newMockOrder(1)
     )
 }
 
@@ -943,6 +1113,7 @@ private fun newMockOrder(number: Int): Order {
         status = "PENDING",
         total = 24.50 + number,
         createdAt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).format(Date()),
+        printedAt = null,
         items = listOf(
             OrderItem("Salmon Avocado Roll", 2, 9.50, listOf("Wasabi: On side"), ""),
             OrderItem("Green Tea", 1, 3.50, listOf("Size: Large"), "")
@@ -952,10 +1123,21 @@ private fun newMockOrder(number: Int): Order {
 
 private fun statusColor(status: String): Color {
     return when (status) {
-        "PENDING" -> Color(0xFFD97706)
-        "ACCEPTED" -> Color(0xFF0F766E)
-        "CANCELLED" -> Color(0xFFB42318)
-        else -> Color(0xFF526173)
+        "PENDING" -> Color(0xFF92400E)
+        "ACCEPTED" -> Color(0xFF14532D)
+        "COMPLETED" -> Color(0xFF1E3A8A)
+        "CANCELLED" -> Color(0xFF991B1B)
+        else -> Muted
+    }
+}
+
+private fun statusBorderColor(status: String): Color {
+    return when (status) {
+        "PENDING" -> Color(0xFFFDE68A)
+        "ACCEPTED" -> Color(0xFFBBF7D0)
+        "COMPLETED" -> Color(0xFFBFDBFE)
+        "CANCELLED" -> Color(0xFFE5E7EB)
+        else -> Border
     }
 }
 
@@ -964,7 +1146,22 @@ private fun money(value: Double): String {
 }
 
 private fun formatOrderTime(value: String): String {
-    return value.ifBlank {
-        SimpleDateFormat("MMM d, h:mm a", Locale.US).format(Date())
+    return try {
+        val normalized = value.replace("Z", "+0000").replace(Regex("\\.\\d{3}"), "")
+        val parsed = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.US).parse(normalized)
+        SimpleDateFormat("h:mm a", Locale.US).format(parsed ?: Date())
+    } catch (_: Exception) {
+        value.ifBlank { SimpleDateFormat("h:mm a", Locale.US).format(Date()) }
     }
 }
+
+private val PageBackground = Color(0xFFEEF2F4)
+private val Ink = Color(0xFF17202A)
+private val Muted = Color(0xFF526173)
+private val Border = Color(0xFFD5DEE4)
+private val BadgeBackground = Color(0xFFE2E8F0)
+private val NoteBackground = Color(0xFFF1F5F9)
+private val Teal = Color(0xFF317F73)
+private val Dark = Color(0xFF17202A)
+private val Orange = Color(0xFFD67A28)
+private val Danger = Color(0xFFB42318)
