@@ -15,6 +15,7 @@ model Restaurant {
   address     String?
   phone       String?
   themeColor  String     @default("#d62828")
+  stripeAccountId String?
   menuItems   MenuItem[]
   categories  MenuCategory[]
   modifierGroups ModifierGroup[]
@@ -115,6 +116,9 @@ model Order {
   customerEmail String?
   notes         String?
   status        String      @default("PENDING")
+  paymentStatus String      @default("UNPAID")
+  stripeSessionId       String?
+  stripePaymentIntentId String?
   total         Decimal     @db.Decimal(10, 2)
   acceptedAt    DateTime?
   printedAt     DateTime?

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+#
+# Blocks commits that contain Stripe secret/restricted keys (sk_/rk_).
+# Install with: ./scripts/install-git-hooks.sh
+#
+set -uo pipefail
+
+# Only scan staged, added/changed content (not deletions).
+staged="$(git diff --cached --no-color -U0 | grep '^+' | grep -v '^+++' || true)"
+
+# Stripe live/test secret + restricted keys.
+pattern='(sk|rk)_(live|test)_[0-9A-Za-z]{16,}'
+
+matches="$(printf '%s\n' "$staged" | grep -nE "$pattern" || true)"
+
+if [ -n "$matches" ]; then
+  echo "✖ Commit blocked: a Stripe secret/restricted key appears in staged changes."
+  echo "  Remove it and keep keys in .env (gitignored) or a secrets manager."
+  echo
+  echo "  Offending lines (masked):"
+  printf '%s\n' "$matches" | sed -E 's/(sk|rk)_(live|test)_[0-9A-Za-z]{16,}/\1_\2_***REDACTED***/g'
+  echo
+  echo "  To bypass intentionally (not recommended): git commit --no-verify"
+  exit 1
+fi
+
+exit 0

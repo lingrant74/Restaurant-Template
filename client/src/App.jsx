@@ -2,6 +2,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 import CategoryDetailPage from "./pages/CategoryDetailPage.jsx";
 import PublicRestaurantPage from "./pages/PublicRestaurantPage.jsx";
+import CheckoutReturnPage from "./pages/CheckoutReturnPage.jsx";
 import OrdersPage from "./pages/OrdersPage.jsx";
 import RestaurantDetailPage from "./pages/RestaurantDetailPage.jsx";
 import ModifiersPage from "./pages/ModifiersPage.jsx";
@@ -9,6 +10,7 @@ import RestaurantsPage from "./pages/RestaurantsPage.jsx";
 import LiveOrdersPage from "./pages/LiveOrdersPage.jsx";
 import AdminLoginPage from "./pages/AdminLoginPage.jsx";
 import RestaurantUsersPage from "./pages/RestaurantUsersPage.jsx";
+import RestaurantPaymentsPage from "./pages/RestaurantPaymentsPage.jsx";
 import TabletLoginPage from "./pages/TabletLoginPage.jsx";
 import LandingPage from "./pages/LandingPage.jsx";
 import ProtectedAdminRoute from "./components/ProtectedAdminRoute.jsx";
@@ -48,8 +50,10 @@ export default function App() {
             <Route path="/admin/restaurants/:restaurantId/live-orders" element={adminPage(<LiveOrdersPage />)} />
             <Route path="/admin/restaurants/:restaurantId/modifiers" element={adminPage(<ModifiersPage />)} />
             <Route path="/admin/restaurants/:restaurantId/users" element={adminPage(<RestaurantUsersPage />)} />
+            <Route path="/admin/restaurants/:restaurantId/payments" element={adminPage(<RestaurantPaymentsPage />)} />
             <Route path="/admin/restaurants/:restaurantId/categories/:categoryId" element={adminPage(<CategoryDetailPage />)} />
             <Route path="/tablet/restaurants/:restaurantId/live-orders" element={tabletPage(<LiveOrdersPage />)} />
+            <Route path="/checkout/return" element={<CheckoutReturnPage />} />
             <Route path="/r/:slug" element={<PublicRestaurantPage />} />
             <Route path="/:slug" element={<PublicRestaurantPage />} />
             <Route path="*" element={<PublicRestaurantPage />} />

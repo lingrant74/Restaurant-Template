@@ -135,6 +135,27 @@ export function createOrder(restaurantId, order) {
   });
 }
 
+export function createCheckoutSession(restaurantId, order) {
+  return apiRequest(`/api/restaurants/${restaurantId}/checkout-session`, {
+    method: "POST",
+    body: JSON.stringify(order)
+  });
+}
+
+export function getCheckoutStatus(sessionId) {
+  return apiRequest(`/api/checkout-session/${sessionId}/status`);
+}
+
+export function getConnectStatus(restaurantId) {
+  return apiRequest(`/api/restaurants/${restaurantId}/connect/status`);
+}
+
+export function createConnectOnboardingLink(restaurantId) {
+  return apiRequest(`/api/restaurants/${restaurantId}/connect/onboarding-link`, {
+    method: "POST"
+  });
+}
+
 export function getOrders(restaurantId) {
   return apiRequest(`/api/restaurants/${restaurantId}/orders`);
 }

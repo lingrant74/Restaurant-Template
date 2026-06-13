@@ -106,6 +106,9 @@ export default function RestaurantDetailPage() {
         <Link className="admin-action-link" to={`/admin/restaurants/${restaurant.id}/users`}>
           Restaurant Users
         </Link>
+        <Link className="admin-action-link" to={`/admin/restaurants/${restaurant.id}/payments`}>
+          Payments
+        </Link>
       </AdminHeader>
 
       {(statusMessage || error) && (

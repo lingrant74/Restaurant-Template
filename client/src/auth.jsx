@@ -10,8 +10,8 @@ export function AuthProvider({ children }) {
   async function checkSession() {
     try {
       setLoading(true);
-      await logoutAdminUser();
-      setCurrentUser(null);
+      const data = await getCurrentAdminUser();
+      setCurrentUser(data.user || null);
     } catch {
       setCurrentUser(null);
     } finally {

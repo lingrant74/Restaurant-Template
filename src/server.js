@@ -4,10 +4,15 @@ const express = require("express");
 const { Prisma } = require("@prisma/client");
 const cookieParser = require("cookie-parser");
 const { authRouter } = require("./auth");
+const { stripeWebhookHandler } = require("./payments");
 const restaurantRoutes = require("./routes/restaurants");
 
 const app = express();
 const port = process.env.PORT || 3000;
+
+// The Stripe webhook must read the raw request body to verify the signature, so
+// it is registered with express.raw BEFORE express.json parses bodies globally.
+app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);
 
 app.use(express.json());
 app.use(cookieParser());
@@ -29,6 +34,9 @@ app.get("/", (req, res) => {
       "PATCH /api/restaurant-users/:userId",
       "DELETE /api/restaurant-users/:userId",
       "POST /api/restaurants/:restaurantId/orders",
+      "POST /api/restaurants/:restaurantId/checkout-session",
+      "GET /api/checkout-session/:sessionId/status",
+      "POST /api/stripe/webhook",
       "GET /api/restaurants/:restaurantId/orders",
       "GET /api/restaurants/:restaurantId/live-orders-info",
       "PATCH /api/orders/:orderId/status",

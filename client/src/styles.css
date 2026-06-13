@@ -488,6 +488,11 @@ button {
   box-shadow: 0 20px 60px rgba(23, 32, 42, 0.28);
 }
 
+.checkout-modal {
+  width: min(640px, 100%);
+  background: #ffffff;
+}
+
 .modal-heading,
 .modifier-modal-footer {
   display: flex;

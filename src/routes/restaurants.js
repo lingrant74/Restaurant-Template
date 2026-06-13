@@ -1,6 +1,8 @@
 const express = require("express");
 const prisma = require("../prismaClient");
 const { requireOrderAccess, requirePlatformAdmin, requireRestaurantAccess } = require("../auth");
+const { getStripeClient, isStripeConfigured } = require("../stripe");
+const { applySessionToOrder, captureOrderPayment, voidOrderPayment, calculatePlatformFeeCents } = require("../payments");
 
 const router = express.Router();
 
@@ -186,6 +188,53 @@ function buildOrderItemSnapshot(menuItem, orderItem) {
     selectedModifiers: modifierSnapshots,
     quantity: Number(orderItem.quantity)
   };
+}
+
+// Validates a cart against the database and returns the priced order items plus
+// the authoritative server-computed total. Throws validation Errors (handled as
+// 400 by the order/checkout routes). Shared by the direct-order and Stripe flows.
+async function buildOrderDraft(restaurantId, items) {
+  const menuItemIds = items.map((item) => Number(item.menuItemId));
+  const menuItems = await prisma.menuItem.findMany({
+    where: {
+      id: {
+        in: menuItemIds
+      },
+      restaurantId,
+      isAvailable: true
+    },
+    include: {
+      modifierGroupLinks: {
+        include: {
+          modifierGroup: {
+            include: {
+              options: true
+            }
+          }
+        }
+      }
+    }
+  });
+
+  const menuItemsById = new Map(menuItems.map((item) => [item.id, item]));
+  const orderItems = [];
+  let total = 0;
+
+  for (const item of items) {
+    const menuItemId = Number(item.menuItemId);
+    const quantity = Number(item.quantity);
+    const menuItem = menuItemsById.get(menuItemId);
+
+    if (!menuItem || !Number.isInteger(quantity) || quantity < 1) {
+      throw new Error("Order includes an invalid or unavailable menu item");
+    }
+
+    const orderItemSnapshot = buildOrderItemSnapshot(menuItem, item);
+    total += Number(orderItemSnapshot.finalPrice) * quantity;
+    orderItems.push(orderItemSnapshot);
+  }
+
+  return { orderItems, total: Number(total.toFixed(2)) };
 }
 
 // POST /restaurants
@@ -1056,47 +1105,7 @@ router.post(["/api/restaurants/:restaurantId/orders", "/restaurants/:restaurantI
       });
     }
 
-    const menuItemIds = items.map((item) => Number(item.menuItemId));
-    const menuItems = await prisma.menuItem.findMany({
-      where: {
-        id: {
-          in: menuItemIds
-        },
-        restaurantId,
-        isAvailable: true
-      },
-      include: {
-        modifierGroupLinks: {
-          include: {
-            modifierGroup: {
-              include: {
-                options: true
-              }
-            }
-          }
-        }
-      }
-    });
-
-    const menuItemsById = new Map(menuItems.map((item) => [item.id, item]));
-    const orderItems = [];
-    let total = 0;
-
-    for (const item of items) {
-      const menuItemId = Number(item.menuItemId);
-      const quantity = Number(item.quantity);
-      const menuItem = menuItemsById.get(menuItemId);
-
-      if (!menuItem || !Number.isInteger(quantity) || quantity < 1) {
-        return res.status(400).json({
-          error: "Order includes an invalid or unavailable menu item"
-        });
-      }
-
-      const orderItemSnapshot = buildOrderItemSnapshot(menuItem, item);
-      total += Number(orderItemSnapshot.finalPrice) * quantity;
-      orderItems.push(orderItemSnapshot);
-    }
+    const { orderItems, total } = await buildOrderDraft(restaurantId, items);
 
     const order = await prisma.order.create({
       data: {
@@ -1106,6 +1115,9 @@ router.post(["/api/restaurants/:restaurantId/orders", "/restaurants/:restaurantI
         notes,
         total: total.toFixed(2),
         restaurantId,
+        // Direct orders (no online checkout) are treated as paid in-store so
+        // they still surface to the kitchen alongside Stripe-paid orders.
+        paymentStatus: "PAID",
         items: {
           create: orderItems
         }
@@ -1126,6 +1138,291 @@ router.post(["/api/restaurants/:restaurantId/orders", "/restaurants/:restaurantI
       });
     }
 
+    next(err);
+  }
+});
+
+// POST /api/restaurants/:restaurantId/connect/onboarding-link
+// Creates the restaurant's connected account (if needed) and returns a Stripe
+// hosted onboarding link. Connected accounts use destination charges so the
+// restaurant receives funds minus the platform application fee.
+router.post(
+  "/api/restaurants/:restaurantId/connect/onboarding-link",
+  requireRestaurantAccess("restaurantId"),
+  async (req, res, next) => {
+    try {
+      if (!isStripeConfigured()) {
+        return res.status(503).json({ error: "Online payments are not configured." });
+      }
+
+      const restaurantId = Number(req.params.restaurantId);
+
+      if (!Number.isInteger(restaurantId)) {
+        return res.status(400).json({ error: "Restaurant id must be a number" });
+      }
+
+      const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId } });
+
+      if (!restaurant) {
+        return res.status(404).json({ error: "Restaurant not found" });
+      }
+
+      let accountId = restaurant.stripeAccountId;
+
+      if (!accountId) {
+        // Controller-based connected account (not the legacy `type` param):
+        // platform is liable for losses (required for destination charges),
+        // Stripe hosts onboarding, and the connected account gets a dashboard.
+        const account = await getStripeClient().accounts.create({
+          controller: {
+            stripe_dashboard: { type: "express" },
+            fees: { payer: "application" },
+            losses: { payments: "application" },
+            requirement_collection: "stripe"
+          },
+          capabilities: {
+            card_payments: { requested: true },
+            transfers: { requested: true }
+          },
+          metadata: { restaurantId: String(restaurantId) }
+        });
+
+        accountId = account.id;
+        await prisma.restaurant.update({
+          where: { id: restaurantId },
+          data: { stripeAccountId: accountId }
+        });
+      }
+
+      const clientBaseUrl = process.env.CLIENT_BASE_URL || "http://localhost:5173";
+      const paymentsUrl = `${clientBaseUrl}/admin/restaurants/${restaurantId}/payments`;
+
+      const accountLink = await getStripeClient().accountLinks.create({
+        account: accountId,
+        refresh_url: `${paymentsUrl}?refresh=1`,
+        return_url: `${paymentsUrl}?return=1`,
+        type: "account_onboarding"
+      });
+
+      res.json({ url: accountLink.url });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// GET /api/restaurants/:restaurantId/connect/status
+// Reports whether the restaurant's connected account can accept charges.
+router.get(
+  "/api/restaurants/:restaurantId/connect/status",
+  requireRestaurantAccess("restaurantId"),
+  async (req, res, next) => {
+    try {
+      if (!isStripeConfigured()) {
+        return res.status(503).json({ error: "Online payments are not configured." });
+      }
+
+      const restaurantId = Number(req.params.restaurantId);
+      const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId } });
+
+      if (!restaurant) {
+        return res.status(404).json({ error: "Restaurant not found" });
+      }
+
+      if (!restaurant.stripeAccountId) {
+        return res.json({
+          connected: false,
+          chargesEnabled: false,
+          payoutsEnabled: false,
+          detailsSubmitted: false
+        });
+      }
+
+      const account = await getStripeClient().accounts.retrieve(restaurant.stripeAccountId);
+
+      res.json({
+        connected: true,
+        accountId: account.id,
+        chargesEnabled: account.charges_enabled,
+        payoutsEnabled: account.payouts_enabled,
+        detailsSubmitted: account.details_submitted
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// POST /api/restaurants/:restaurantId/checkout-session
+// Creates an UNPAID order and an embedded Stripe Checkout Session for the
+// server-computed total. The order is marked PAID later via webhook / status check.
+router.post("/api/restaurants/:restaurantId/checkout-session", async (req, res, next) => {
+  try {
+    if (!isStripeConfigured()) {
+      return res.status(503).json({
+        error: "Online payments are not configured."
+      });
+    }
+
+    const restaurantId = Number(req.params.restaurantId);
+    const { customerName, customerPhone, customerEmail, notes, items } = req.body;
+
+    if (!Number.isInteger(restaurantId)) {
+      return res.status(400).json({ error: "Restaurant id must be a number" });
+    }
+
+    if (!customerName || !customerPhone) {
+      return res.status(400).json({ error: "Customer name and phone number are required" });
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: "Order must include at least one item" });
+    }
+
+    const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId } });
+
+    if (!restaurant) {
+      return res.status(404).json({ error: "Restaurant not found" });
+    }
+
+    if (!restaurant.stripeAccountId) {
+      return res.status(409).json({
+        error: "This restaurant isn't set up to accept online payments yet."
+      });
+    }
+
+    const connectedAccount = await getStripeClient().accounts.retrieve(restaurant.stripeAccountId);
+
+    if (!connectedAccount.charges_enabled) {
+      return res.status(409).json({
+        error: "This restaurant hasn't finished its payment setup yet."
+      });
+    }
+
+    const { orderItems, total } = await buildOrderDraft(restaurantId, items);
+
+    if (total <= 0) {
+      return res.status(400).json({ error: "Order total must be greater than zero" });
+    }
+
+    const order = await prisma.order.create({
+      data: {
+        customerName,
+        customerPhone,
+        customerEmail,
+        notes,
+        total: total.toFixed(2),
+        restaurantId,
+        paymentStatus: "UNPAID",
+        items: {
+          create: orderItems
+        }
+      },
+      include: orderInclude()
+    });
+
+    const clientBaseUrl = process.env.CLIENT_BASE_URL || "http://localhost:5173";
+    const returnUrl = `${clientBaseUrl}/checkout/return?session_id={CHECKOUT_SESSION_ID}`;
+
+    // One Stripe line item per order item, priced from the DB-computed finalPrice.
+    const lineItems = order.items.map((item) => {
+      const modifiers = Array.isArray(item.selectedModifiers) ? item.selectedModifiers : [];
+      const description = modifiers
+        .map((modifier) => `${modifier.groupName}: ${modifier.optionName}`)
+        .join(", ");
+
+      return {
+        quantity: item.quantity,
+        price_data: {
+          currency: "usd",
+          unit_amount: Math.round(Number(item.finalPrice) * 100),
+          product_data: {
+            name: item.name,
+            ...(description ? { description: description.slice(0, 500) } : {})
+          }
+        }
+      };
+    });
+
+    // NOTE: payment_method_types is intentionally omitted to enable Stripe's
+    // dynamic payment methods (configured from the Dashboard).
+    // Platform fee: larger of $0.20/item-unit or 3.5% of the order total.
+    const applicationFeeAmount = calculatePlatformFeeCents(order.items, total);
+
+    const session = await getStripeClient().checkout.sessions.create({
+      mode: "payment",
+      ui_mode: "embedded_page",
+      line_items: lineItems,
+      return_url: returnUrl,
+      // Authorize the card now but capture only when the restaurant accepts the
+      // order. Declined orders are voided, so the customer is never charged.
+      // Funds (minus the platform fee) are transferred to the restaurant's
+      // connected account via a destination charge.
+      payment_intent_data: {
+        capture_method: "manual",
+        application_fee_amount: applicationFeeAmount,
+        transfer_data: {
+          destination: restaurant.stripeAccountId
+        }
+      },
+      client_reference_id: String(order.id),
+      metadata: {
+        orderId: String(order.id),
+        restaurantId: String(restaurantId)
+      },
+      ...(customerEmail ? { customer_email: customerEmail } : {})
+    });
+
+    await prisma.order.update({
+      where: { id: order.id },
+      data: { stripeSessionId: session.id }
+    });
+
+    res.status(201).json({
+      clientSecret: session.client_secret,
+      orderId: order.id
+    });
+  } catch (err) {
+    if (
+      err.message &&
+      (err.message.startsWith("Order includes") || err.message.includes("requires") || err.message.includes("allows"))
+    ) {
+      return res.status(400).json({ error: err.message });
+    }
+
+    next(err);
+  }
+});
+
+// GET /api/checkout-session/:sessionId/status
+// Confirms payment after the embedded checkout returns. Marks the order PAID
+// if Stripe reports the session as paid (fallback for when no webhook is set up).
+router.get("/api/checkout-session/:sessionId/status", async (req, res, next) => {
+  try {
+    if (!isStripeConfigured()) {
+      return res.status(503).json({ error: "Online payments are not configured." });
+    }
+
+    const session = await getStripeClient().checkout.sessions.retrieve(req.params.sessionId, {
+      expand: ["payment_intent"]
+    });
+
+    let order = await applySessionToOrder(session);
+
+    const orderId = session.metadata?.orderId ? Number(session.metadata.orderId) : null;
+
+    if (!order && orderId) {
+      order = await prisma.order.findUnique({ where: { id: orderId } });
+    }
+
+    res.json({
+      status: session.status,
+      paymentStatus: order?.paymentStatus || "UNPAID",
+      orderId: order?.id || orderId,
+      customerName: order?.customerName || null,
+      total: order?.total || null
+    });
+  } catch (err) {
     next(err);
   }
 });
@@ -1156,7 +1453,12 @@ router.get("/api/restaurants/:restaurantId/orders", requireRestaurantAccess("res
 
     const orders = await prisma.order.findMany({
       where: {
-        restaurantId
+        restaurantId,
+        // Hide only abandoned checkouts (never authorized). Authorized, paid,
+        // and declined/refunded orders all remain visible to the kitchen/admin.
+        paymentStatus: {
+          not: "UNPAID"
+        }
       },
       include: orderInclude(),
       orderBy: {
@@ -1267,6 +1569,17 @@ router.patch("/api/orders/:orderId/accept", requireOrderAccess(), async (req, re
       });
     }
 
+    const existingOrder = await prisma.order.findUnique({ where: { id: orderId } });
+
+    if (!existingOrder) {
+      return res.status(404).json({
+        error: "Order not found"
+      });
+    }
+
+    // Capture the held authorization so the customer is charged on acceptance.
+    const paymentStatus = await captureOrderPayment(existingOrder);
+
     const order = await prisma.order.update({
       where: {
         id: orderId
@@ -1275,7 +1588,8 @@ router.patch("/api/orders/:orderId/accept", requireOrderAccess(), async (req, re
         status: "ACCEPTED",
         acceptedAt: new Date(),
         printedAt: null,
-        cancelledAt: null
+        cancelledAt: null,
+        paymentStatus
       },
       include: orderInclude()
     });
@@ -1304,13 +1618,25 @@ router.patch("/api/orders/:orderId/decline", requireOrderAccess(), async (req, r
       });
     }
 
+    const existingOrder = await prisma.order.findUnique({ where: { id: orderId } });
+
+    if (!existingOrder) {
+      return res.status(404).json({
+        error: "Order not found"
+      });
+    }
+
+    // Void the held authorization so the customer is never charged.
+    const paymentStatus = await voidOrderPayment(existingOrder);
+
     const order = await prisma.order.update({
       where: {
         id: orderId
       },
       data: {
         status: "CANCELLED",
-        cancelledAt: new Date()
+        cancelledAt: new Date(),
+        paymentStatus
       },
       include: orderInclude()
     });
@@ -1377,7 +1703,8 @@ router.get("/api/print-agent/restaurants/:restaurantId/orders", requireRestauran
       where: {
         restaurantId,
         status: "ACCEPTED",
-        printedAt: null
+        printedAt: null,
+        paymentStatus: "PAID"
       },
       include: orderInclude(),
       orderBy: {
