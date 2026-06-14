@@ -237,9 +237,11 @@ export default function PublicRestaurantPage() {
 
   function updateCustomerField(event) {
     const { name, value } = event.target;
+    const nextValue = name === "customerPhone" ? value.replace(/\D/g, "").slice(0, 10) : value;
+
     setCustomerForm((currentForm) => ({
       ...currentForm,
-      [name]: value
+      [name]: nextValue
     }));
   }
 
@@ -255,6 +257,11 @@ export default function PublicRestaurantPage() {
 
     if (!customerForm.customerName.trim() || !customerForm.customerPhone.trim()) {
       setOrderError("Name and phone number are required.");
+      return;
+    }
+
+    if (!/^\d{10}$/.test(customerForm.customerPhone)) {
+      setOrderError("Phone number must be exactly 10 numbers.");
       return;
     }
 
@@ -448,7 +455,16 @@ export default function PublicRestaurantPage() {
 
               <label>
                 Phone
-                <input name="customerPhone" value={customerForm.customerPhone} onChange={updateCustomerField} required />
+                <input
+                  name="customerPhone"
+                  value={customerForm.customerPhone}
+                  onChange={updateCustomerField}
+                  inputMode="numeric"
+                  pattern="[0-9]{10}"
+                  maxLength="10"
+                  placeholder="10 digit phone number"
+                  required
+                />
               </label>
 
               <label>

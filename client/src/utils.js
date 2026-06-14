@@ -5,6 +5,7 @@ export const emptyRestaurantForm = {
   description: "",
   address: "",
   phone: "",
+  websiteUrl: "",
   themeColor: "#d62828"
 };
 

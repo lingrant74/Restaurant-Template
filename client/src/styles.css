@@ -2225,6 +2225,11 @@ button {
   font-weight: 950;
 }
 
+.live-order-actions button:only-child,
+.live-order-detail-actions button:only-child {
+  grid-column: 1 / -1;
+}
+
 .accept-order-button {
   background: #0f766e;
 }
@@ -2672,10 +2677,18 @@ button {
     inset: 0 auto auto 0;
     display: block;
     width: 320px;
-    padding: 12px;
+    padding: 12px 12px 128px;
     color: #000000;
     background: #ffffff;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    box-sizing: border-box;
+    page-break-after: always;
+  }
+
+  .print-receipt::after {
+    content: "";
+    display: block;
+    height: 96px;
   }
 
   .print-receipt h1 {

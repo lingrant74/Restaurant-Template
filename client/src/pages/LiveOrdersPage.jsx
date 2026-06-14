@@ -387,6 +387,10 @@ function LiveOrderCard({ order, isHighlighted, onAccept, onReject, onPrint, onCo
         </div>
 
         <div className="live-order-actions">
+          <button className="print-order-button" type="button" onClick={() => onPrint(order)}>
+            Print Receipt
+          </button>
+
           {order.status === "PENDING" && (
             <>
               <button className="accept-order-button" type="button" onClick={() => onAccept(order.id)}>
@@ -400,9 +404,6 @@ function LiveOrderCard({ order, isHighlighted, onAccept, onReject, onPrint, onCo
 
           {order.status === "ACCEPTED" && (
             <>
-              <button className="print-order-button" type="button" onClick={() => onPrint(order)}>
-                Print Receipt
-              </button>
               <button className="complete-order-button" type="button" onClick={() => onComplete(order.id)}>
                 Mark Completed
               </button>
@@ -453,6 +454,10 @@ function OrderDetailView({ order, onBack, onAccept, onReject, onPrint, onComplet
         </div>
 
         <div className="live-order-detail-actions">
+          <button className="print-order-button" type="button" onClick={() => onPrint(order)}>
+            Print Receipt
+          </button>
+
           {order.status === "PENDING" && (
             <>
               <button className="accept-order-button" type="button" onClick={() => onAccept(order.id)}>
@@ -466,9 +471,6 @@ function OrderDetailView({ order, onBack, onAccept, onReject, onPrint, onComplet
 
           {order.status === "ACCEPTED" && (
             <>
-              <button className="print-order-button" type="button" onClick={() => onPrint(order)}>
-                Print Receipt
-              </button>
               <button className="complete-order-button" type="button" onClick={() => onComplete(order.id)}>
                 Mark Completed
               </button>

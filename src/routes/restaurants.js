@@ -241,7 +241,7 @@ async function buildOrderDraft(restaurantId, items) {
 // Creates a restaurant. The slug is public and should be URL-friendly, like "pasta-house".
 router.post("/restaurants", requirePlatformAdmin, async (req, res, next) => {
   try {
-    const { name, slug, description, address, phone, themeColor } = req.body;
+    const { name, slug, description, address, phone, websiteUrl, themeColor } = req.body;
     const ownerEmail = String(req.body.ownerEmail || "").trim().toLowerCase();
 
     if (!name) {
@@ -264,6 +264,7 @@ router.post("/restaurants", requirePlatformAdmin, async (req, res, next) => {
           description,
           address,
           phone,
+          websiteUrl,
           themeColor,
           categories: {
             create: createDefaultCategories()
@@ -1074,6 +1075,7 @@ router.post(["/api/restaurants/:restaurantId/orders", "/restaurants/:restaurantI
   try {
     const restaurantId = Number(req.params.restaurantId);
     const { customerName, customerPhone, customerEmail, notes, items } = req.body;
+    const normalizedCustomerPhone = String(customerPhone || "").replace(/\D/g, "");
 
     if (!Number.isInteger(restaurantId)) {
       return res.status(400).json({
@@ -1084,6 +1086,12 @@ router.post(["/api/restaurants/:restaurantId/orders", "/restaurants/:restaurantI
     if (!customerName || !customerPhone) {
       return res.status(400).json({
         error: "Customer name and phone number are required"
+      });
+    }
+
+    if (!/^\d{10}$/.test(normalizedCustomerPhone)) {
+      return res.status(400).json({
+        error: "Customer phone number must be exactly 10 numbers"
       });
     }
 
@@ -1110,7 +1118,7 @@ router.post(["/api/restaurants/:restaurantId/orders", "/restaurants/:restaurantI
     const order = await prisma.order.create({
       data: {
         customerName,
-        customerPhone,
+        customerPhone: normalizedCustomerPhone,
         customerEmail,
         notes,
         total: total.toFixed(2),
@@ -1497,6 +1505,7 @@ router.get("/api/restaurants/:restaurantId/live-orders-info", requireRestaurantA
         slug: true,
         phone: true,
         address: true,
+        websiteUrl: true,
         themeColor: true
       }
     });

@@ -124,6 +124,9 @@ private data class RestaurantInfo(
     val id: String = "",
     val name: String = "Restaurant",
     val slug: String = "",
+    val phone: String = "",
+    val address: String = "",
+    val websiteUrl: String = "",
     val themeColor: String = "#0f766e"
 )
 
@@ -138,7 +141,11 @@ private data class Order(
     val total: Double,
     val createdAt: String,
     val printedAt: String?,
-    val items: List<OrderItem>
+    val items: List<OrderItem>,
+    val subtotal: Double = 0.0,
+    val tax: Double = 0.0,
+    val paymentReceived: Double = 0.0,
+    val paymentStatus: String = "Paid"
 )
 
 private data class OrderItem(
@@ -265,7 +272,7 @@ private fun RestaurantTabletApp() {
 
                 if (settings.printerIp.isNotBlank()) {
                     try {
-                        EscPosPrinter.printKitchenTicket(settings, acceptedOrder)
+                        EscPosPrinter.printKitchenTicket(settings, restaurant, acceptedOrder)
                         if (!settings.mockMode) {
                             ApiClient(settings).markPrinted(order.id)
                         }
@@ -298,6 +305,36 @@ private fun RestaurantTabletApp() {
                 statusMessage = "Declined order #${order.id}."
             } catch (err: Exception) {
                 errorMessage = "Could not decline order: ${err.message}"
+            }
+        }
+    }
+
+    fun printOrder(order: Order) {
+        scope.launch {
+            if (settings.printerIp.isBlank()) {
+                errorMessage = "Add a printer IP address before printing."
+                screen = Screen.Printer
+                return@launch
+            }
+
+            try {
+                statusMessage = "Printing order #${order.id}..."
+                EscPosPrinter.printKitchenTicket(settings, restaurant, order)
+
+                if (!settings.mockMode) {
+                    ApiClient(settings).markPrinted(order.id)
+                    refreshOrders(quiet = true)
+                } else {
+                    orders = updateOrderInList(
+                        orders,
+                        order.copy(printedAt = SimpleDateFormat("MMM d, h:mm a", Locale.US).format(Date()))
+                    )
+                }
+
+                statusMessage = "Printed order #${order.id}."
+                errorMessage = ""
+            } catch (err: Exception) {
+                errorMessage = "Could not print order #${order.id}: ${err.message}"
             }
         }
     }
@@ -364,6 +401,7 @@ private fun RestaurantTabletApp() {
                 onBackFromOrder = { selectedOrder = null },
                 onAccept = ::acceptOrder,
                 onDecline = ::declineOrder,
+                onPrint = ::printOrder,
                 onAddMockOrder = {
                     orders = listOf(newMockOrder(orders.size + 1)) + orders
                 }
@@ -448,6 +486,7 @@ private fun DashboardScreen(
     onBackFromOrder: () -> Unit,
     onAccept: (Order) -> Unit,
     onDecline: (Order) -> Unit,
+    onPrint: (Order) -> Unit,
     onAddMockOrder: () -> Unit
 ) {
     if (selectedOrder != null) {
@@ -455,14 +494,15 @@ private fun DashboardScreen(
             order = selectedOrder,
             onBack = onBackFromOrder,
             onAccept = { onAccept(selectedOrder) },
-            onDecline = { onDecline(selectedOrder) }
+            onDecline = { onDecline(selectedOrder) },
+            onPrint = { onPrint(selectedOrder) }
         )
         return
     }
 
     val activeCount = orders.count { it.status == "PENDING" || it.status == "ACCEPTED" }
     val filteredOrders = orders.filter { selectedFilter.status == null || it.status == selectedFilter.status }
-    val menuUrl = "${settings.apiUrl.trimEnd('/')}/r/${restaurant.slug.ifBlank { "joes-pizza" }}"
+    val menuUrl = publicMenuUrl(settings.apiUrl, restaurant.slug.ifBlank { "joes-pizza" })
 
     Column(modifier = Modifier.fillMaxSize().background(PageBackground)) {
         LiveHeader(
@@ -499,7 +539,7 @@ private fun DashboardScreen(
                 }
             } else {
                 items(filteredOrders) { order ->
-                    WebsiteOrderCard(order = order, onClick = { onOpenOrder(order) })
+                    WebsiteOrderCard(order = order, onClick = { onOpenOrder(order) }, onPrint = { onPrint(order) })
                 }
             }
         }
@@ -617,7 +657,7 @@ private fun OnlineMenuCard(menuUrl: String) {
 }
 
 @Composable
-private fun WebsiteOrderCard(order: Order, onClick: () -> Unit) {
+private fun WebsiteOrderCard(order: Order, onClick: () -> Unit, onPrint: () -> Unit) {
     Card(
         modifier = Modifier.width(380.dp).fillMaxHeight().clickable(onClick = onClick),
         shape = RoundedCornerShape(8.dp),
@@ -659,6 +699,15 @@ private fun WebsiteOrderCard(order: Order, onClick: () -> Unit) {
                 Text("Total", color = Ink, fontSize = 24.sp, fontWeight = FontWeight.Black)
                 Text(money(order.total), color = Ink, fontSize = 24.sp, fontWeight = FontWeight.Black)
             }
+
+            Button(
+                onClick = onPrint,
+                colors = ButtonDefaults.buttonColors(containerColor = Dark),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth().height(50.dp)
+            ) {
+                Text("Print Receipt", fontSize = 17.sp, fontWeight = FontWeight.Black)
+            }
         }
     }
 }
@@ -695,7 +744,7 @@ private fun StatusBadge(status: String) {
 }
 
 @Composable
-private fun OrderDetailScreen(order: Order, onBack: () -> Unit, onAccept: () -> Unit, onDecline: () -> Unit) {
+private fun OrderDetailScreen(order: Order, onBack: () -> Unit, onAccept: () -> Unit, onDecline: () -> Unit, onPrint: () -> Unit) {
     PageShell(scroll = false) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column {
@@ -727,8 +776,17 @@ private fun OrderDetailScreen(order: Order, onBack: () -> Unit, onAccept: () -> 
                 Text(money(order.total), fontSize = 30.sp, color = Ink, fontWeight = FontWeight.Black)
             }
 
-            if (order.status == "PENDING") {
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = onPrint,
+                    modifier = Modifier.weight(1f).height(76.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Dark),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Print Receipt", fontSize = 22.sp, fontWeight = FontWeight.Black)
+                }
+
+                if (order.status == "PENDING") {
                     Button(
                         onClick = onAccept,
                         modifier = Modifier.weight(1f).height(76.dp),
@@ -934,39 +992,318 @@ private class ApiClient(private val settings: AppSettings) {
 }
 
 private object EscPosPrinter {
-    suspend fun testPrint(settings: AppSettings) = withContext(Dispatchers.IO) {
-        send(settings, buildString {
-            appendLine("RESTAURANT TABLET TEST")
-            appendLine("----------------------")
-            appendLine("Printer connected.")
-            appendLine(SimpleDateFormat("MMM d, h:mm a", Locale.US).format(Date()))
-            appendLine("\n\n")
-        }.toByteArray(Charsets.UTF_8) + byteArrayOf(0x1D, 0x56, 0x00))
-    }
+    // 48 columns uses the full text width on many 80mm ESC/POS printers.
+    // If a 58mm printer is used later, change this to 32.
+    private const val TicketWidth = 48
+    private val initialize = byteArrayOf(0x1B, 0x40)
+    private val alignLeft = byteArrayOf(0x1B, 0x61, 0x00)
+    private val alignCenter = byteArrayOf(0x1B, 0x61, 0x01)
+    private val boldOn = byteArrayOf(0x1B, 0x45, 0x01)
+    private val boldOff = byteArrayOf(0x1B, 0x45, 0x00)
+    private val fontA = byteArrayOf(0x1B, 0x4D, 0x00)
+    private val lineSpacingRoomy = byteArrayOf(0x1B, 0x33, 34)
+    private val leftMarginZero = byteArrayOf(0x1D, 0x4C, 0x00, 0x00)
+    private val fullPrintWidth = byteArrayOf(0x1D, 0x57, 0x40, 0x02)
+    private val normalSize = byteArrayOf(0x1D, 0x21, 0x00)
+    private val doubleHeight = byteArrayOf(0x1D, 0x21, 0x01)
+    private val doubleWidthHeight = byteArrayOf(0x1D, 0x21, 0x11)
+    private val cutPaper = byteArrayOf(0x1D, 0x56, 0x00)
 
-    suspend fun printKitchenTicket(settings: AppSettings, order: Order) = withContext(Dispatchers.IO) {
-        val ticketText = buildString {
-            appendLine("KITCHEN ORDER")
-            appendLine("Order #${order.id}")
-            appendLine(formatOrderTime(order.createdAt))
-            appendLine("------------------------------")
-            appendLine(order.customerName)
-            appendLine(order.customerPhone)
-            appendLine("${order.orderType} - ${order.fulfillmentType}")
-            if (order.notes.isNotBlank()) appendLine("NOTES: ${order.notes}")
-            appendLine("------------------------------")
-            order.items.forEach { item ->
-                appendLine("${item.quantity} x ${item.name}")
-                item.modifiers.forEach { modifier -> appendLine("  - $modifier") }
-                if (item.notes.isNotBlank()) appendLine("  Note: ${item.notes}")
-            }
-            appendLine("------------------------------")
-            appendLine("TOTAL ${money(order.total)}")
-            appendLine("\n\n")
+    suspend fun testPrint(settings: AppSettings) = withContext(Dispatchers.IO) {
+        val bytes = buildEscPosTicket {
+            command(alignCenter)
+            command(boldOn)
+            command(doubleWidthHeight)
+            text("TEST PRINT\n\n")
+            command(normalSize)
+            text("${line('-')}\n")
+            command(alignLeft)
+            command(boldOff)
+            text("${centeredLine("Printer connected.")}\n")
+            text("${centeredLine(SimpleDateFormat("MMM d, h:mm a", Locale.US).format(Date()))}\n")
+            text("${line('-')}\n")
+            feedBottom()
         }
 
-        val bytes = byteArrayOf(0x1B, 0x40) + ticketText.toByteArray(Charsets.UTF_8) + byteArrayOf(0x1D, 0x56, 0x00)
         send(settings, bytes)
+    }
+
+    suspend fun printKitchenTicket(settings: AppSettings, restaurant: RestaurantInfo, order: Order) = withContext(Dispatchers.IO) {
+        val websiteUrl = cleanOptional(restaurant.websiteUrl)
+        val bytes = buildEscPosTicket {
+            command(alignCenter)
+            command(boldOn)
+            command(doubleHeight)
+            wrap(restaurant.name, 24).forEach { text("$it\n") }
+            command(normalSize)
+            command(boldOff)
+            if (restaurant.address.isNotBlank()) {
+                wrap(restaurant.address, TicketWidth).forEach { text("$it\n") }
+            }
+            if (restaurant.phone.isNotBlank()) {
+                text("TEL: ${restaurant.phone}\n")
+            }
+            verticalSpace()
+
+            command(boldOn)
+            command(doubleHeight)
+            text("${order.fulfillmentType.uppercase(Locale.US)}\n")
+            command(doubleHeight)
+            text("${order.orderType.uppercase(Locale.US)}\n")
+            command(normalSize)
+            command(boldOff)
+            verticalSpace()
+            command(alignCenter)
+            text("${dateTimeOrderLine(order)}\n")
+            majorDivider()
+            verticalSpace()
+
+            command(alignLeft)
+            command(boldOn)
+            text("${labelValueLine("Phone:", order.customerPhone)}\n")
+            smallVerticalSpace()
+            text("${labelValueLine("Name:", order.customerName)}\n")
+            smallVerticalSpace()
+            command(boldOff)
+            val remarks = cleanOptional(order.notes) ?: ""
+            text("${labelValueLine("Remarks:", remarks)}\n")
+            wrapContinuation("Remarks:", remarks).forEach { text("$it\n") }
+            smallVerticalSpace()
+
+            majorDivider()
+            verticalSpace()
+            order.items.forEach { item ->
+                command(boldOn)
+                val itemName = if (item.quantity > 1) "${item.name} x${item.quantity}" else item.name
+                itemLine(itemName, receiptMoney(item.price * item.quantity)).forEach { text("$it\n") }
+                command(boldOff)
+                item.modifiers.forEach { modifier ->
+                    cleanOptional(modifier)?.let { cleanModifier ->
+                        wrap("** $cleanModifier", TicketWidth - 4).forEach { text("  $it\n") }
+                    }
+                }
+                cleanOptional(item.notes)?.let { comment ->
+                    wrap("** Comment: $comment", TicketWidth - 4).forEach { text("  $it\n") }
+                }
+                itemDivider()
+                verticalSpace()
+            }
+
+            val subtotal = if (order.subtotal > 0.0) order.subtotal else order.total
+            val tax = order.tax.coerceAtLeast(0.0)
+            val received = if (order.paymentReceived > 0.0) order.paymentReceived else order.total
+            val paymentLabel = paymentLabel(order.paymentStatus)
+
+            verticalSpace()
+            text("${moneyLine("Amount:", receiptMoney(subtotal))}\n")
+            text("${moneyLine("Tax:", receiptMoney(tax))}\n")
+            command(boldOn)
+            command(doubleHeight)
+            text("${moneyLine("Total:", receiptMoney(order.total))}\n")
+            command(normalSize)
+            command(boldOff)
+            text("${moneyLine("$paymentLabel Received:", receiptMoney(received))}\n")
+            majorDivider()
+            verticalSpace()
+            printTipSuggestions(order.total)
+            majorDivider()
+            verticalSpace()
+            command(alignCenter)
+            command(boldOn)
+            text("Thank you very much\n")
+            command(boldOff)
+            if (websiteUrl != null) {
+                text("\n")
+                qrCode(websiteUrl)
+                text("$websiteUrl\n")
+            }
+            feedBottom()
+        }
+
+        send(settings, bytes)
+    }
+
+    private class EscPosTicketBuilder {
+        private val bytes = mutableListOf<Byte>()
+
+        fun command(commandBytes: ByteArray) {
+            commandBytes.forEach { bytes.add(it) }
+        }
+
+        fun text(value: String) {
+            value.toByteArray(Charsets.UTF_8).forEach { bytes.add(it) }
+        }
+
+        fun feedBottom() {
+            text("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n")
+        }
+
+        fun verticalSpace() {
+            text("\n")
+        }
+
+        fun smallVerticalSpace() {
+            command(byteArrayOf(0x1B, 0x4A, 12))
+        }
+
+        fun majorDivider() {
+            command(boldOn)
+            text("${line('=')}\n")
+            command(boldOff)
+        }
+
+        fun itemDivider() {
+            text("${centeredLine("-".repeat((TicketWidth - 8).coerceAtLeast(12)))}\n")
+        }
+
+        fun qrCode(value: String) {
+            val qrData = value.toByteArray(Charsets.UTF_8)
+            val storeLength = qrData.size + 3
+            val pL = (storeLength % 256).toByte()
+            val pH = (storeLength / 256).toByte()
+
+            command(byteArrayOf(0x1D, 0x28, 0x6B, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00))
+            command(byteArrayOf(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x43, 0x06))
+            command(byteArrayOf(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x45, 0x31))
+            command(byteArrayOf(0x1D, 0x28, 0x6B, pL, pH, 0x31, 0x50, 0x30) + qrData)
+            command(byteArrayOf(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x51, 0x30))
+        }
+
+        fun build(): ByteArray {
+            command(cutPaper)
+            return bytes.toByteArray()
+        }
+    }
+
+    private fun buildEscPosTicket(content: EscPosTicketBuilder.() -> Unit): ByteArray {
+        return EscPosTicketBuilder().apply {
+            command(initialize)
+            command(fontA)
+            command(leftMarginZero)
+            command(fullPrintWidth)
+            command(lineSpacingRoomy)
+            command(alignLeft)
+            command(normalSize)
+            content()
+        }.build()
+    }
+
+    private fun line(character: Char = '-'): String {
+        return character.toString().repeat(TicketWidth)
+    }
+
+    private fun moneyLine(label: String, value: String): String {
+        val spaceCount = (TicketWidth - label.length - value.length).coerceAtLeast(1)
+        return label + " ".repeat(spaceCount) + value
+    }
+
+    private fun labelValueLine(label: String, value: String): String {
+        return "$label  $value".take(TicketWidth)
+    }
+
+    private fun wrapContinuation(label: String, value: String): List<String> {
+        val firstLineWidth = (TicketWidth - label.length - 2).coerceAtLeast(1)
+
+        if (value.length <= firstLineWidth) {
+            return emptyList()
+        }
+
+        return wrap(value.drop(firstLineWidth).trim(), TicketWidth - label.length - 2)
+            .map { "${" ".repeat(label.length + 2)}$it" }
+    }
+
+    private fun centeredLine(value: String): String {
+        val cleanValue = value.take(TicketWidth)
+        val leftPadding = ((TicketWidth - cleanValue.length) / 2).coerceAtLeast(0)
+        return " ".repeat(leftPadding) + cleanValue
+    }
+
+    private fun dateTimeOrderLine(order: Order): String {
+        val left = "Date:${formatOrderDate(order.createdAt)}"
+        val middle = "Time:${formatOrderTime(order.createdAt)}"
+        val right = "#${order.id}"
+        val firstGap = ((TicketWidth - left.length - middle.length - right.length) / 2).coerceAtLeast(1)
+        val secondGap = (TicketWidth - left.length - firstGap - middle.length - right.length).coerceAtLeast(1)
+        return left + " ".repeat(firstGap) + middle + " ".repeat(secondGap) + right
+    }
+
+    private fun itemLine(name: String, price: String): List<String> {
+        val availableNameWidth = TicketWidth - price.length - 2
+        val wrappedName = wrap(name, availableNameWidth)
+
+        return wrappedName.mapIndexed { index, line ->
+            if (index == 0) {
+                val gap = (TicketWidth - line.length - price.length).coerceAtLeast(1)
+                line + " ".repeat(gap) + price
+            } else {
+                "  $line"
+            }
+        }
+    }
+
+    private fun EscPosTicketBuilder.printTipSuggestions(total: Double) {
+        command(alignCenter)
+        command(boldOn)
+        text("Tip Suggestions:\n")
+        command(boldOff)
+        smallVerticalSpace()
+        listOf(18, 20, 25).forEach { percent ->
+            val tip = total * percent / 100
+            val newTotal = total + tip
+            text("If $percent%, Tip:${receiptMoney(tip)}, Total ${receiptMoney(newTotal)}\n")
+        }
+        command(alignLeft)
+    }
+
+    private fun receiptMoney(value: Double): String {
+        return String.format(Locale.US, "%.2f", value)
+    }
+
+    private fun paymentLabel(paymentStatus: String): String {
+        val normalized = paymentStatus.trim()
+        if (normalized.isBlank() || normalized.equals("PAID", ignoreCase = true)) {
+            return "Paid"
+        }
+
+        return normalized.lowercase(Locale.US).replaceFirstChar { it.uppercase(Locale.US) }
+    }
+
+    private fun cleanOptional(value: String?): String? {
+        val cleanValue = value?.trim().orEmpty()
+
+        if (cleanValue.isBlank() || cleanValue.equals("null", ignoreCase = true)) {
+            return null
+        }
+
+        return cleanValue
+    }
+
+    private fun wrap(value: String, width: Int = TicketWidth): List<String> {
+        val cleanValue = value.trim()
+
+        if (cleanValue.length <= width) {
+            return listOf(cleanValue)
+        }
+
+        val lines = mutableListOf<String>()
+        var currentLine = ""
+
+        cleanValue.split(Regex("\\s+")).forEach { word ->
+            if (currentLine.isBlank()) {
+                currentLine = word
+            } else if (currentLine.length + 1 + word.length <= width) {
+                currentLine = "$currentLine $word"
+            } else {
+                lines.add(currentLine)
+                currentLine = word
+            }
+        }
+
+        if (currentLine.isNotBlank()) {
+            lines.add(currentLine)
+        }
+
+        return lines
     }
 
     private fun send(settings: AppSettings, bytes: ByteArray) {
@@ -986,6 +1323,9 @@ private fun parseRestaurant(json: JSONObject): RestaurantInfo {
         id = jsonId(json),
         name = json.optString("name", "Restaurant"),
         slug = json.optString("slug", ""),
+        phone = json.optString("phone", ""),
+        address = json.optString("address", ""),
+        websiteUrl = json.optString("websiteUrl", ""),
         themeColor = json.optString("themeColor", "#0f766e")
     )
 }
@@ -1014,6 +1354,10 @@ private fun parseOrder(json: JSONObject): Order {
         notes = json.optString("notes", ""),
         status = json.optString("status", "PENDING"),
         total = json.optDouble("total", json.optDouble("subtotal", 0.0)),
+        subtotal = json.optDouble("subtotal", json.optDouble("amount", json.optDouble("total", 0.0))),
+        tax = json.optDouble("tax", 0.0),
+        paymentReceived = json.optDouble("paymentReceived", json.optDouble("received", json.optDouble("total", 0.0))),
+        paymentStatus = json.optString("paymentStatus", "Paid"),
         createdAt = json.optString("createdAt", Date().time.toString()),
         printedAt = json.optString("printedAt").takeIf { it.isNotBlank() && it != "null" },
         items = List(itemsJson.length()) { index -> parseOrderItem(itemsJson.getJSONObject(index)) }
@@ -1141,6 +1485,15 @@ private fun statusBorderColor(status: String): Color {
     }
 }
 
+private fun publicMenuUrl(apiUrl: String, slug: String): String {
+    val localFrontendUrl = apiUrl
+        .trimEnd('/')
+        .replace("10.0.2.2:3000", "10.0.2.2:5173")
+        .replace("localhost:3000", "localhost:5173")
+
+    return "$localFrontendUrl/r/$slug"
+}
+
 private fun money(value: Double): String {
     return NumberFormat.getCurrencyInstance(Locale.US).format(value)
 }
@@ -1152,6 +1505,16 @@ private fun formatOrderTime(value: String): String {
         SimpleDateFormat("h:mm a", Locale.US).format(parsed ?: Date())
     } catch (_: Exception) {
         value.ifBlank { SimpleDateFormat("h:mm a", Locale.US).format(Date()) }
+    }
+}
+
+private fun formatOrderDate(value: String): String {
+    return try {
+        val normalized = value.replace("Z", "+0000").replace(Regex("\\.\\d{3}"), "")
+        val parsed = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.US).parse(normalized)
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).format(parsed ?: Date())
+    } catch (_: Exception) {
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
     }
 }
 

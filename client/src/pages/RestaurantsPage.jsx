@@ -108,6 +108,17 @@ export default function RestaurantsPage() {
           </label>
 
           <label>
+            Website / QR Code URL
+            <input
+              name="websiteUrl"
+              type="url"
+              value={restaurantForm.websiteUrl}
+              onChange={updateRestaurantField}
+              placeholder="https://restaurant-website.com"
+            />
+          </label>
+
+          <label>
             Theme Color
             <input name="themeColor" type="color" value={restaurantForm.themeColor} onChange={updateRestaurantField} />
           </label>
