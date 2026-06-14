@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { EmbeddedCheckout, EmbeddedCheckoutProvider } from "@stripe/react-stripe-js";
-import { createCheckoutSession, getPublicRestaurant } from "../api.js";
-import { stripePromise } from "../stripe.js";
+import { createOrder, getPublicRestaurant } from "../api.js";
 import { createAnchorId, formatPrice, getItemModifierGroups, getJapaneseCategoryLabel, groupMenuItems } from "../utils.js";
 
 export default function PublicRestaurantPage() {
@@ -18,7 +16,6 @@ export default function PublicRestaurantPage() {
   const [orderMessage, setOrderMessage] = useState("");
   const [orderError, setOrderError] = useState("");
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
-  const [checkoutClientSecret, setCheckoutClientSecret] = useState("");
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
   const [customizingItem, setCustomizingItem] = useState(null);
@@ -263,7 +260,7 @@ export default function PublicRestaurantPage() {
 
     try {
       setIsSubmittingOrder(true);
-      const { clientSecret } = await createCheckoutSession(restaurant.id, {
+      const order = await createOrder(restaurant.id, {
         ...customerForm,
         items: cartItemsList.map((item) => ({
           menuItemId: item.menuItemId,
@@ -273,9 +270,14 @@ export default function PublicRestaurantPage() {
         }))
       });
 
-      // Open the embedded Stripe Checkout. On successful payment Stripe redirects
-      // the page to /checkout/return, which confirms and shows the receipt.
-      setCheckoutClientSecret(clientSecret);
+      setCartItems({});
+      setCustomerForm({
+        customerName: "",
+        customerPhone: "",
+        customerEmail: "",
+        notes: ""
+      });
+      setOrderMessage(`Order #${order.id} was placed successfully.`);
     } catch (err) {
       setOrderError(err.message);
     } finally {
@@ -460,7 +462,7 @@ export default function PublicRestaurantPage() {
               </label>
 
               <button type="submit" disabled={cartItemsList.length === 0 || isSubmittingOrder}>
-                {isSubmittingOrder ? "Starting Checkout..." : "Pay & Place Order"}
+                {isSubmittingOrder ? "Placing Order..." : "Place Order"}
               </button>
             </form>
             </aside>
@@ -478,26 +480,6 @@ export default function PublicRestaurantPage() {
           onAdd={addCustomizedItemToCart}
           previewModifiers={getSelectedModifierSnapshots(customizingItem)}
         />
-      )}
-
-      {checkoutClientSecret && (
-        <div className="modal-backdrop">
-          <section className="modifier-modal checkout-modal">
-            <div className="modal-heading">
-              <div>
-                <p className="eyebrow">Payment</p>
-                <h2>Complete your payment</h2>
-              </div>
-              <button type="button" onClick={() => setCheckoutClientSecret("")}>
-                Cancel
-              </button>
-            </div>
-
-            <EmbeddedCheckoutProvider stripe={stripePromise} options={{ clientSecret: checkoutClientSecret }}>
-              <EmbeddedCheckout />
-            </EmbeddedCheckoutProvider>
-          </section>
-        </div>
       )}
     </main>
   );
