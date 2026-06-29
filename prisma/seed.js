@@ -13,7 +13,12 @@ async function main() {
       description: "Neighborhood pizza, fresh from the oven.",
       address: "123 Main St",
       phone: "555-123-4567",
-      themeColor: "#d62828"
+      themeColor: "#d62828",
+      twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER || "+19313399781",
+      aiHandoffMode: "WHEN_CUSTOMER_ASKS",
+      maxFailedAttempts: 3,
+      allowCustomerRequestHandoff: true,
+      handoffPhoneNumber: process.env.HANDOFF_PHONE_NUMBER || null
     },
     create: {
       name: "Joe's Pizza",
@@ -22,6 +27,7 @@ async function main() {
       address: "123 Main St",
       phone: "555-123-4567",
       themeColor: "#d62828",
+      twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER || "+19313399781",
       categories: {
         create: defaultCategories.map((name, index) => ({
           name,

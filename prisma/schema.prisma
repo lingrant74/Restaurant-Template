@@ -16,7 +16,12 @@ model Restaurant {
   phone       String?
   websiteUrl  String?
   themeColor  String     @default("#d62828")
-  stripeAccountId String?
+  stripeAccountId   String?
+  twilioPhoneNumber         String?   @unique
+  aiHandoffMode             String    @default("WHEN_CUSTOMER_ASKS")
+  maxFailedAttempts         Int       @default(3)
+  allowCustomerRequestHandoff Boolean @default(true)
+  handoffPhoneNumber        String?
   menuItems   MenuItem[]
   categories  MenuCategory[]
   modifierGroups ModifierGroup[]

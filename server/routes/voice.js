@@ -4,6 +4,7 @@ const prisma = require("../prismaClient");
 const { parseVoiceOrder, loadItemModifiers } = require("../voiceParser");
 const { getState, setState, clearState } = require("../voiceState");
 const { detectIntent, hasPendingModifiers } = require("../voiceIntents");
+const { detectCallType } = require("../callClassifier");
 
 const router = express.Router();
 
@@ -15,19 +16,188 @@ router.get("/health", (req, res) => {
 });
 
 // POST /api/voice/incoming
-router.post("/api/voice/incoming", (req, res) => {
+// Listens briefly for automated systems before greeting. If the caller is
+// silent (a human waiting), falls through to the normal greeting.
+router.post("/api/voice/incoming", async (req, res) => {
   const callerPhone = req.body.From || "unknown";
-  console.log(`📞 Incoming call from: ${callerPhone}`);
+  const calledNumber = req.body.To || "";
+  const callSid = req.body.CallSid || "unknown";
+
+  console.log("───────────────────────────────────────");
+  console.log("📞 Incoming call:");
+  console.log(`   CallSid: ${callSid}`);
+  console.log(`   From:    ${callerPhone}`);
+  console.log(`   To:      ${calledNumber}`);
 
   const twiml = new VoiceResponse();
+
+  // Look up restaurant by the Twilio number that was called.
+  let restaurant = null;
+  if (calledNumber) {
+    restaurant = await prisma.restaurant.findUnique({
+      where: { twilioPhoneNumber: calledNumber },
+    });
+  }
+
+  // Fall back to env var / default for backward compatibility (curl tests).
+  if (!restaurant) {
+    const fallbackId = Number(process.env.VOICE_RESTAURANT_ID) || 1;
+    restaurant = await prisma.restaurant.findUnique({ where: { id: fallbackId } });
+  }
+
+  if (!restaurant) {
+    console.log("   ❌ No restaurant found for this number");
+    console.log("───────────────────────────────────────");
+    twiml.say("Sorry, this phone number is not connected to a restaurant yet.");
+    res.type("text/xml");
+    return res.send(twiml.toString());
+  }
+
+  console.log(`   ✅ Restaurant: ${restaurant.name} (id: ${restaurant.id})`);
+  console.log("───────────────────────────────────────");
+
+  // Initialize call state with the restaurant and handoff settings.
+  setState(callSid, {
+    restaurantId: restaurant.id,
+    restaurantName: restaurant.name,
+    callerPhone,
+    items: [],
+    awaitingConfirmation: false,
+    failedAttempts: 0,
+    handoffSettings: {
+      aiHandoffMode: restaurant.aiHandoffMode,
+      maxFailedAttempts: restaurant.maxFailedAttempts,
+      allowCustomerRequestHandoff: restaurant.allowCustomerRequestHandoff,
+      handoffPhoneNumber: restaurant.handoffPhoneNumber,
+    },
+  });
+
+  // If mode is ALWAYS, immediately transfer.
+  if (restaurant.aiHandoffMode === "ALWAYS") {
+    console.log("   📞 Handoff mode: ALWAYS — transferring immediately");
+    if (restaurant.handoffPhoneNumber) {
+      twiml.say("Let me connect you to the restaurant.");
+      twiml.dial(restaurant.handoffPhoneNumber);
+    } else {
+      twiml.say("Sorry, I cannot connect you to the restaurant right now. Please try again later.");
+    }
+    res.type("text/xml");
+    return res.send(twiml.toString());
+  }
+
+  // Listen briefly for automated speech/DTMF before greeting.
+  // Automated systems speak immediately; humans wait for a prompt.
   const gather = twiml.gather({
+    input: "speech dtmf",
+    action: "/api/voice/classify",
+    method: "POST",
+    speechTimeout: "3",
+    timeout: 4,
+  });
+  gather.pause({ length: 1 });
+
+  // If no speech/digits detected (human caller waiting), fall through to greeting.
+  const greetGather = twiml.gather({
     input: "speech",
     action: "/api/voice/process",
     method: "POST",
     speechTimeout: "auto",
   });
-  gather.say("Hello. Welcome to the restaurant AI assistant. What would you like to order?");
+  greetGather.say(`Hello. Welcome to ${restaurant.name}. What would you like to order?`);
   twiml.say("Sorry, I did not hear anything. Please call again.");
+
+  res.type("text/xml");
+  res.send(twiml.toString());
+});
+
+// POST /api/voice/classify
+// Classifies the first speech/digits to determine call type.
+router.post("/api/voice/classify", async (req, res) => {
+  const speechResult = req.body.SpeechResult || "";
+  const digits = req.body.Digits || "";
+  const callerPhone = req.body.From || "unknown";
+  const callSid = req.body.CallSid || "unknown";
+
+  const classification = detectCallType({ speechResult, digits, from: callerPhone });
+
+  console.log("🔍 Call classification:");
+  console.log(`   CallSid:  ${callSid}`);
+  console.log(`   Speech:   "${speechResult}"`);
+  console.log(`   Digits:   ${digits || "(none)"}`);
+  console.log(`   Intent:   ${classification.intent}`);
+  console.log(`   Platform: ${classification.platform || "(none)"}`);
+  console.log(`   Reason:   ${classification.reason}`);
+
+  const twiml = new VoiceResponse();
+  const state = getState(callSid);
+
+  if (classification.intent === "ORDER_CONFIRMATION") {
+    console.log("   Action:   Pressing 1, hanging up");
+    console.log("───────────────────────────────────────");
+    twiml.play({ digits: "1" });
+    twiml.say("Order confirmed.");
+    twiml.hangup();
+  } else if (classification.intent === "CUSTOMER_ORDER") {
+    console.log("   Action:   Continuing to customer order flow");
+    console.log("───────────────────────────────────────");
+    // The caller already said something order-like — feed it into the order flow.
+    // Redirect to /process so their speech gets parsed as an order.
+    const gather = twiml.gather({
+      input: "speech",
+      action: "/api/voice/process",
+      method: "POST",
+      speechTimeout: "auto",
+    });
+    const restaurantName = (state && state.restaurantName) || "the restaurant";
+    gather.say(`Welcome to ${restaurantName}. I heard you say: ${speechResult}. Is that what you'd like to order, or would you like something else?`);
+    twiml.say("Sorry, I did not hear anything. Goodbye.");
+  } else {
+    // UNKNOWN — ask if they want to place an order.
+    console.log("   Action:   Asking if caller wants to order");
+    console.log("───────────────────────────────────────");
+    const gather = twiml.gather({
+      input: "speech",
+      action: "/api/voice/classify-confirm",
+      method: "POST",
+      speechTimeout: "auto",
+    });
+    gather.say("Are you calling to place a new order?");
+    twiml.say("I did not hear a response. Goodbye.");
+    twiml.hangup();
+  }
+
+  res.type("text/xml");
+  res.send(twiml.toString());
+});
+
+// POST /api/voice/classify-confirm
+// Handles the yes/no response to "Are you calling to place a new order?"
+router.post("/api/voice/classify-confirm", async (req, res) => {
+  const speechResult = req.body.SpeechResult || "";
+  const callSid = req.body.CallSid || "unknown";
+  const text = speechResult.toLowerCase().trim();
+
+  console.log(`🔍 Classify confirm: "${speechResult}" (CallSid: ${callSid})`);
+
+  const twiml = new VoiceResponse();
+  const state = getState(callSid);
+
+  if (/\b(yes|yeah|yep|sure|ok|okay|order|i want|i'd like)\b/.test(text)) {
+    console.log("   → Caller wants to order, continuing flow");
+    const restaurantName = (state && state.restaurantName) || "the restaurant";
+    const gather = twiml.gather({
+      input: "speech",
+      action: "/api/voice/process",
+      method: "POST",
+      speechTimeout: "auto",
+    });
+    gather.say(`Great! Welcome to ${restaurantName}. What would you like to order?`);
+    twiml.say("Sorry, I did not hear anything. Please call again.");
+  } else {
+    console.log("   → Caller does not want to order, hanging up");
+    twiml.say("No problem. Goodbye, have a nice day.");
+    twiml.hangup();
+  }
 
   res.type("text/xml");
   res.send(twiml.toString());
@@ -40,7 +210,10 @@ router.post("/api/voice/process", async (req, res) => {
   const confidence = req.body.Confidence || "N/A";
   const callerPhone = req.body.From || "unknown";
   const callSid = req.body.CallSid || "unknown";
-  const restaurantId = Number(process.env.VOICE_RESTAURANT_ID) || 1;
+
+  // Get restaurantId from call state (set in /incoming), fall back to env/default.
+  const existingState = getState(callSid);
+  const restaurantId = (existingState && existingState.restaurantId) || Number(process.env.VOICE_RESTAURANT_ID) || 1;
 
   console.log("───────────────────────────────────────");
   console.log("📞 Voice transcription received:");
@@ -49,9 +222,28 @@ router.post("/api/voice/process", async (req, res) => {
   console.log(`   Said:       "${speechResult}"`);
   console.log(`   Confidence: ${confidence}`);
 
-  let state = getState(callSid);
+  let state = existingState;
   const intent = detectIntent(speechResult, state);
   console.log(`🧠 Intent: ${intent.intent}`);
+
+  // Check for immediate handoff on ASK_HUMAN intent.
+  if (intent.intent === "ASK_HUMAN") {
+    const handoffResult = attemptHandoff(state, "customer_requested");
+    if (handoffResult) {
+      console.log(`📞 Handoff: ${handoffResult.reason}`);
+      const twiml = new VoiceResponse();
+      if (handoffResult.type === "transfer") {
+        twiml.say("Let me connect you to the restaurant.");
+        twiml.dial(handoffResult.phoneNumber);
+      } else {
+        const gather = twiml.gather({ input: "speech", action: "/api/voice/process", method: "POST", speechTimeout: "auto" });
+        gather.say(handoffResult.message);
+        twiml.say("Sorry, I did not hear anything. Goodbye.");
+      }
+      res.type("text/xml");
+      return res.send(twiml.toString());
+    }
+  }
 
   let responseText;
 
@@ -84,6 +276,9 @@ router.post("/api/voice/process", async (req, res) => {
       case "REMOVE_MODIFIER":
         responseText = handleRemoveModifier(state, intent.data, callSid);
         break;
+      case "ASK_HUMAN":
+        responseText = "Sorry, live transfer is not available right now. Please continue with your order or call the restaurant directly.";
+        break;
       case "ORDER_ITEMS":
       default:
         responseText = await handleOrderItems(speechResult, restaurantId, callerPhone, callSid, state);
@@ -92,6 +287,26 @@ router.post("/api/voice/process", async (req, res) => {
   } catch (err) {
     console.error("❌ Error in voice handler:", err);
     responseText = "Sorry, something went wrong. What would you like to order?";
+  }
+
+  // Track failed attempts (when parser couldn't match anything).
+  if (responseText && (responseText.includes("couldn't find that") || responseText.includes("didn't catch that"))) {
+    if (state) {
+      state.failedAttempts = (state.failedAttempts || 0) + 1;
+      setState(callSid, state);
+      console.log(`   ⚠️ Failed attempts: ${state.failedAttempts}`);
+
+      // Check if we should handoff after failures.
+      const handoffResult = attemptHandoff(state, "failed_attempts");
+      if (handoffResult && handoffResult.type === "transfer") {
+        console.log(`📞 Handoff after ${state.failedAttempts} failures: ${handoffResult.reason}`);
+        const twiml = new VoiceResponse();
+        twiml.say("Let me connect you to the restaurant.");
+        twiml.dial(handoffResult.phoneNumber);
+        res.type("text/xml");
+        return res.send(twiml.toString());
+      }
+    }
   }
 
   console.log(`💬 Response: "${responseText}"`);
@@ -418,5 +633,110 @@ async function findReferencedItem(state, speech, restaurantId) {
   }
   return null;
 }
+
+/**
+ * Checks if the call should be handed off to a human.
+ * Returns null if no handoff, or { type, phoneNumber, message, reason }.
+ */
+function attemptHandoff(state, trigger) {
+  if (!state || !state.handoffSettings) return null;
+
+  const { aiHandoffMode, maxFailedAttempts, allowCustomerRequestHandoff, handoffPhoneNumber } = state.handoffSettings;
+
+  if (trigger === "customer_requested") {
+    if (aiHandoffMode === "NEVER" || !allowCustomerRequestHandoff) {
+      return {
+        type: "message",
+        message: "Sorry, live transfer is not available right now. Please continue with your order or call the restaurant directly.",
+        reason: "handoff mode is NEVER or customer request not allowed",
+      };
+    }
+    if (aiHandoffMode === "WHEN_CUSTOMER_ASKS" || aiHandoffMode === "AFTER_FAILED_ATTEMPTS") {
+      if (!handoffPhoneNumber) {
+        return {
+          type: "message",
+          message: "Sorry, I cannot connect you to the restaurant right now.",
+          reason: "no handoff phone number configured",
+        };
+      }
+      return {
+        type: "transfer",
+        phoneNumber: handoffPhoneNumber,
+        reason: "customer requested human, mode allows it",
+      };
+    }
+  }
+
+  if (trigger === "failed_attempts") {
+    if (aiHandoffMode !== "AFTER_FAILED_ATTEMPTS") return null;
+    const failures = state.failedAttempts || 0;
+    if (failures >= maxFailedAttempts) {
+      if (!handoffPhoneNumber) {
+        return {
+          type: "message",
+          message: "Sorry, I cannot connect you to the restaurant right now. Please try again.",
+          reason: "max failures reached but no handoff phone number",
+        };
+      }
+      return {
+        type: "transfer",
+        phoneNumber: handoffPhoneNumber,
+        reason: `${failures} failed attempts reached threshold of ${maxFailedAttempts}`,
+      };
+    }
+  }
+
+  return null;
+}
+
+// ─── Voice Settings API ─────────────────────────────────────────────────────
+
+// PATCH /api/restaurants/:restaurantId/voice-settings
+router.patch("/api/restaurants/:restaurantId/voice-settings", async (req, res) => {
+  try {
+    const restaurantId = Number(req.params.restaurantId);
+    if (!Number.isInteger(restaurantId)) {
+      return res.status(400).json({ error: "Restaurant id must be a number" });
+    }
+
+    const { aiHandoffMode, maxFailedAttempts, allowCustomerRequestHandoff, handoffPhoneNumber } = req.body;
+    const validModes = ["NEVER", "ALWAYS", "WHEN_CUSTOMER_ASKS", "AFTER_FAILED_ATTEMPTS"];
+
+    const data = {};
+    if (aiHandoffMode !== undefined) {
+      if (!validModes.includes(aiHandoffMode)) {
+        return res.status(400).json({ error: `aiHandoffMode must be one of: ${validModes.join(", ")}` });
+      }
+      data.aiHandoffMode = aiHandoffMode;
+    }
+    if (maxFailedAttempts !== undefined) {
+      data.maxFailedAttempts = Number(maxFailedAttempts);
+    }
+    if (allowCustomerRequestHandoff !== undefined) {
+      data.allowCustomerRequestHandoff = Boolean(allowCustomerRequestHandoff);
+    }
+    if (handoffPhoneNumber !== undefined) {
+      data.handoffPhoneNumber = handoffPhoneNumber || null;
+    }
+
+    const restaurant = await prisma.restaurant.update({
+      where: { id: restaurantId },
+      data,
+    });
+
+    console.log(`⚙️ Voice settings updated for ${restaurant.name}: ${JSON.stringify(data)}`);
+    res.json({
+      aiHandoffMode: restaurant.aiHandoffMode,
+      maxFailedAttempts: restaurant.maxFailedAttempts,
+      allowCustomerRequestHandoff: restaurant.allowCustomerRequestHandoff,
+      handoffPhoneNumber: restaurant.handoffPhoneNumber,
+    });
+  } catch (err) {
+    if (err.code === "P2025") {
+      return res.status(404).json({ error: "Restaurant not found" });
+    }
+    res.status(500).json({ error: "Failed to update voice settings" });
+  }
+});
 
 module.exports = router;

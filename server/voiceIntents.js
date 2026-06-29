@@ -30,6 +30,11 @@ function detectIntent(speech, state) {
     return { intent: "DONE" };
   }
 
+  // Customer wants to talk to a human.
+  if (/\b(talk to a person|talk to someone|representative|speak to someone|speak to a person|real person|human|staff|employee|manager|call the restaurant|connect me|transfer me|operator)\b/.test(text)) {
+    return { intent: "ASK_HUMAN" };
+  }
+
   // Ask about sizes.
   if (/\b(what sizes|sizes|size options)\b/.test(text)) {
     return { intent: "ASK_SIZES" };
