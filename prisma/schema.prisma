@@ -116,6 +116,7 @@ model Order {
   customerPhone String
   customerEmail String?
   notes         String?
+  source        String?
   status        String      @default("PENDING")
   paymentStatus String      @default("UNPAID")
   stripeSessionId       String?

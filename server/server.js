@@ -1,11 +1,13 @@
 require("dotenv").config();
 
 const express = require("express");
+const cors = require("cors");
 const { Prisma } = require("@prisma/client");
 const cookieParser = require("cookie-parser");
 const { authRouter } = require("./auth");
 const { stripeWebhookHandler } = require("./payments");
 const restaurantRoutes = require("./routes/restaurants");
+const voiceRoutes = require("./routes/voice");
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -14,6 +16,7 @@ const port = process.env.PORT || 3000;
 // it is registered with express.raw BEFORE express.json parses bodies globally.
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);
 
+app.use(cors());
 app.use(express.json());
 app.use(cookieParser());
 
@@ -58,13 +61,17 @@ app.get("/", (req, res) => {
       "DELETE /menu-items/:id",
       "PATCH /menu-categories/:id",
       "DELETE /menu-categories/:id",
-      "GET /public/restaurants/:slug"
+      "GET /public/restaurants/:slug",
+      "GET /health",
+      "POST /api/voice/incoming",
+      "POST /api/voice/process"
     ]
   });
 });
 
 app.use(authRouter);
 app.use(restaurantRoutes);
+app.use(voiceRoutes);
 
 // Keep errors readable while this project is still small.
 app.use((err, req, res, next) => {

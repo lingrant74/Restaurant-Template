@@ -673,6 +673,7 @@ private fun WebsiteOrderCard(order: Order, onClick: () -> Unit, onPrint: () -> U
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     StatusBadge(order.status)
+                    PaymentBadge(order.paymentStatus)
                     Text(formatOrderTime(order.createdAt), color = Muted, fontSize = 18.sp, fontWeight = FontWeight.Black)
                 }
             }
@@ -744,6 +745,25 @@ private fun StatusBadge(status: String) {
 }
 
 @Composable
+private fun PaymentBadge(paymentStatus: String) {
+    val background = when (paymentStatus) {
+        "PAID" -> Color(0xFFDCFCE7)
+        "UNPAID" -> Color(0xFFFEE2E2)
+        "AUTHORIZED" -> Color(0xFFDBEAFE)
+        else -> BadgeBackground
+    }
+    val textColor = when (paymentStatus) {
+        "PAID" -> Color(0xFF166534)
+        "UNPAID" -> Color(0xFF991B1B)
+        "AUTHORIZED" -> Color(0xFF1E40AF)
+        else -> Muted
+    }
+    Box(modifier = Modifier.background(background, RoundedCornerShape(999.dp)).padding(horizontal = 12.dp, vertical = 7.dp)) {
+        Text(paymentStatus, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Black)
+    }
+}
+
+@Composable
 private fun OrderDetailScreen(order: Order, onBack: () -> Unit, onAccept: () -> Unit, onDecline: () -> Unit, onPrint: () -> Unit) {
     PageShell(scroll = false) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -754,6 +774,7 @@ private fun OrderDetailScreen(order: Order, onBack: () -> Unit, onAccept: () -> 
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 StatusBadge(order.status)
+                PaymentBadge(order.paymentStatus)
                 DarkButton("Back to Dashboard", onBack)
             }
         }

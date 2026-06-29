@@ -1462,11 +1462,6 @@ router.get("/api/restaurants/:restaurantId/orders", requireRestaurantAccess("res
     const orders = await prisma.order.findMany({
       where: {
         restaurantId,
-        // Hide only abandoned checkouts (never authorized). Authorized, paid,
-        // and declined/refunded orders all remain visible to the kitchen/admin.
-        paymentStatus: {
-          not: "UNPAID"
-        }
       },
       include: orderInclude(),
       orderBy: {

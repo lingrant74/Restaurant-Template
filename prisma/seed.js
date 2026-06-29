@@ -105,7 +105,106 @@ async function main() {
     ]
   });
 
-  console.log("Seeded Joe's Pizza with sample menu items.");
+  // Create modifier groups for testing voice ordering with modifiers.
+  const menuItems = await prisma.menuItem.findMany({
+    where: { restaurantId: restaurant.id },
+  });
+  const itemByName = new Map(menuItems.map((item) => [item.name, item]));
+
+  // Size modifier group (required for Pepperoni Pizza)
+  const sizeGroup = await prisma.modifierGroup.upsert({
+    where: { restaurantId_name: { restaurantId: restaurant.id, name: "Size" } },
+    update: {},
+    create: {
+      restaurantId: restaurant.id,
+      name: "Size",
+      required: true,
+      allowMultiple: false,
+      minSelections: 1,
+      maxSelections: 1,
+      sort: 0,
+      options: {
+        create: [
+          { name: "Small", priceDelta: 0, sort: 0 },
+          { name: "Medium", priceDelta: 2, sort: 1 },
+          { name: "Large", priceDelta: 4, sort: 2 },
+        ],
+      },
+    },
+  });
+
+  // Toppings modifier group (optional for Pepperoni Pizza)
+  const toppingsGroup = await prisma.modifierGroup.upsert({
+    where: { restaurantId_name: { restaurantId: restaurant.id, name: "Extra Toppings" } },
+    update: {},
+    create: {
+      restaurantId: restaurant.id,
+      name: "Extra Toppings",
+      required: false,
+      allowMultiple: true,
+      minSelections: 0,
+      maxSelections: 5,
+      sort: 1,
+      options: {
+        create: [
+          { name: "Extra Cheese", priceDelta: 1.5, sort: 0 },
+          { name: "Mushrooms", priceDelta: 1, sort: 1 },
+          { name: "Bacon", priceDelta: 2, sort: 2 },
+          { name: "Onions", priceDelta: 0.75, sort: 3 },
+          { name: "Peppers", priceDelta: 0.75, sort: 4 },
+        ],
+      },
+    },
+  });
+
+  // Dressing modifier group (required for House Salad)
+  const dressingGroup = await prisma.modifierGroup.upsert({
+    where: { restaurantId_name: { restaurantId: restaurant.id, name: "Dressing" } },
+    update: {},
+    create: {
+      restaurantId: restaurant.id,
+      name: "Dressing",
+      required: true,
+      allowMultiple: false,
+      minSelections: 1,
+      maxSelections: 1,
+      sort: 0,
+      options: {
+        create: [
+          { name: "Ranch", priceDelta: 0, sort: 0 },
+          { name: "Italian", priceDelta: 0, sort: 1 },
+          { name: "Balsamic", priceDelta: 0, sort: 2 },
+        ],
+      },
+    },
+  });
+
+  // Link modifier groups to menu items.
+  const pepperoni = itemByName.get("Pepperoni Pizza");
+  const salad = itemByName.get("House Salad");
+
+  if (pepperoni) {
+    await prisma.menuItemModifierGroup.upsert({
+      where: { menuItemId_modifierGroupId: { menuItemId: pepperoni.id, modifierGroupId: sizeGroup.id } },
+      update: {},
+      create: { menuItemId: pepperoni.id, modifierGroupId: sizeGroup.id },
+    });
+    await prisma.menuItemModifierGroup.upsert({
+      where: { menuItemId_modifierGroupId: { menuItemId: pepperoni.id, modifierGroupId: toppingsGroup.id } },
+      update: {},
+      create: { menuItemId: pepperoni.id, modifierGroupId: toppingsGroup.id },
+    });
+  }
+
+  if (salad) {
+    await prisma.menuItemModifierGroup.upsert({
+      where: { menuItemId_modifierGroupId: { menuItemId: salad.id, modifierGroupId: dressingGroup.id } },
+      update: {},
+      create: { menuItemId: salad.id, modifierGroupId: dressingGroup.id },
+    });
+  }
+
+  console.log("Seeded Joe's Pizza with sample menu items and modifier groups.");
 }
 
 main()

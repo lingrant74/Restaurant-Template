@@ -2,7 +2,7 @@
 
 Native Android tablet app for restaurant staff. The dashboard is designed to match the website live-orders UI: large `LIVE ORDERS` header, hamburger button, sound alert button, status filters, online menu link card, and horizontal kitchen-ticket style order cards.
 
-This app is separate from the website. It lives in `android-tablet-app` and does not replace the React/Vite frontend.
+This app is separate from the website. It lives in `android` and does not replace the React/Vite frontend.
 
 ## Local Backend URL
 
@@ -71,7 +71,7 @@ Authorization: Bearer {agentToken}
 3. Select:
 
 ```text
-/Users/newowner/PROJECTS/restaurant/android-tablet-app
+/Users/newowner/PROJECTS/restaurant/android
 ```
 
 4. Let Android Studio sync Gradle.
@@ -106,7 +106,7 @@ The tablet and printer must be on the same network. The app sends raw ESC/POS by
 ## Build From Terminal
 
 ```bash
-cd /Users/newowner/PROJECTS/restaurant/android-tablet-app
+cd /Users/newowner/PROJECTS/restaurant/android
 ./gradlew :app:assembleDebug
 ```
 
