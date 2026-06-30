@@ -8,6 +8,8 @@ const { authRouter } = require("./auth");
 const { stripeWebhookHandler } = require("./payments");
 const restaurantRoutes = require("./routes/restaurants");
 const voiceRoutes = require("./routes/voice");
+const vapiRoutes = require("./routes/vapi");
+const printerRoutes = require("./routes/printers");
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -72,6 +74,8 @@ app.get("/", (req, res) => {
 app.use(authRouter);
 app.use(restaurantRoutes);
 app.use(voiceRoutes);
+app.use(vapiRoutes);
+app.use(printerRoutes);
 
 // Keep errors readable while this project is still small.
 app.use((err, req, res, next) => {

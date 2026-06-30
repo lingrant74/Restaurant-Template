@@ -2,200 +2,153 @@ import { Link } from "react-router-dom";
 
 export default function LandingPage() {
   return (
-    <main className="lp">
-      <nav className="lp-nav">
-        <div className="lp-nav-inner">
-          <Link to="/" className="lp-nav-brand">
-            <img src="/gigi-logo.png" alt="GIGI" className="lp-nav-logo" />
-            <span>GIGI</span>
-          </Link>
-          <div className="lp-nav-links">
-            <a href="#product">Product</a>
-            <a href="#how">How it works</a>
-            <a href="#control">Pricing</a>
-            <Link to="/tablet/login">Restaurant Login</Link>
-            <a href="#cta" className="lp-nav-btn">Book a Demo</a>
-          </div>
+    <main className="ed">
+      {/* ─── Nav ─── */}
+      <nav className="ed-nav">
+        <Link to="/" className="ed-nav-brand">
+          <img src="/gigi-logo.png" alt="GIGI" />
+          <span>GIGI</span>
+        </Link>
+        <div className="ed-nav-right">
+          <a href="#how">How it works</a>
+          <a href="#product">Product</a>
+          <Link to="/tablet/login">Login</Link>
+          <a href="#cta" className="ed-nav-cta">Get started</a>
         </div>
       </nav>
 
-      {/* ─── Cinematic Hero ─── */}
-      <section className="lp-hero">
-        <div className="lp-hero-center">
-          <p className="lp-hero-tag">Phone order automation for restaurants</p>
-          <h1>Never miss another<br />dinner rush call.</h1>
-          <p className="lp-hero-sub">gigi answers calls, confirms orders, and sends clean tickets to your kitchen while your team stays focused.</p>
-          <div className="lp-hero-btns">
-            <a href="#cta" className="lp-btn-red">Book a Demo</a>
-            <a href="#how" className="lp-btn-outline">See how it works</a>
+      {/* ─── Hero ─── */}
+      <section className="ed-hero">
+        <div className="ed-hero-left">
+          <span className="ed-kicker">For restaurants losing orders to voicemail</span>
+          <h1>Your phone rings.<br />Nobody's free.<br />The order is gone.</h1>
+          <p className="ed-hero-p">GIGI answers the call, takes the order, confirms it back, and prints a ticket to your kitchen. Your staff never gets interrupted.</p>
+          <div className="ed-hero-actions">
+            <a href="#cta" className="ed-btn-primary">Book a demo</a>
+            <a href="#how" className="ed-btn-ghost">See how it works</a>
           </div>
-          <p className="lp-hero-trust">Built for restaurants that can't afford to miss the phone during peak hours.</p>
         </div>
-
-        <div className="lp-hero-stage">
-          <div className="lp-hero-float lp-float-left">
-            <span className="lp-float-dot red" />
-            <span>Dinner rush mode</span>
+        <div className="ed-hero-right">
+          <div className="ed-ticket">
+            <div className="ed-ticket-header">
+              <span className="ed-ticket-badge">PHONE ORDER</span>
+              <span className="ed-ticket-time">6:47 PM</span>
+            </div>
+            <div className="ed-ticket-body">
+              <p className="ed-ticket-id">#147</p>
+              <p>2x LG PEPPERONI</p>
+              <p className="ed-ticket-mod">&nbsp;&nbsp;+XTRA CHEESE &nbsp;-ONION</p>
+              <p>1x HOUSE SALAD</p>
+              <p className="ed-ticket-mod">&nbsp;&nbsp;+RANCH</p>
+              <p className="ed-ticket-rule">――――――――――――――――</p>
+              <p className="ed-ticket-total">TOTAL &nbsp; $38.48</p>
+            </div>
+            <div className="ed-ticket-footer">
+              <span className="ed-ticket-status">Sent to printer</span>
+            </div>
           </div>
-          <div className="lp-hero-float lp-float-right-top">
-            <span className="lp-float-dot green" />
-            <span>Printer online</span>
+          <div className="ed-hero-aside">
+            <p className="ed-aside-line"><span className="ed-dot green" />Printer connected</p>
+            <p className="ed-aside-line"><span className="ed-dot red" />3 calls this rush</p>
+            <p className="ed-aside-line"><span className="ed-dot" />Avg 47 seconds</p>
           </div>
-          <div className="lp-hero-float lp-float-right-bottom">
-            <span>Staff handoff available</span>
+        </div>
+      </section>
+
+      {/* ─── Statement ─── */}
+      <section className="ed-statement">
+        <p>Restaurants lose 20% of phone orders during peak hours.<br />Not because the food is bad. Because nobody picked up.</p>
+      </section>
+
+      {/* ─── How It Works ─── */}
+      <section className="ed-how" id="how">
+        <div className="ed-how-header">
+          <h2>How it works</h2>
+        </div>
+        <div className="ed-how-grid">
+          <div className="ed-how-step">
+            <span className="ed-how-num">01</span>
+            <h3>The phone rings</h3>
+            <p>Customer calls your restaurant number. GIGI picks up instantly — no hold music, no missed rings.</p>
           </div>
+          <div className="ed-how-step">
+            <span className="ed-how-num">02</span>
+            <h3>The order is captured</h3>
+            <p>GIGI asks about sizes, toppings, dressings. Confirms the order back. Gets a yes before anything prints.</p>
+          </div>
+          <div className="ed-how-step">
+            <span className="ed-how-num">03</span>
+            <h3>The ticket prints</h3>
+            <p>A clean kitchen ticket hits your printer — or your dashboard. Same format as your online orders.</p>
+          </div>
+        </div>
+      </section>
 
-          <div className="lp-hero-mockup">
-            <div className="mockup-chrome">
-              <div className="mockup-topbar">
-                <span className="mockup-dot-live" />
-                <span className="mockup-call-info">+1 (555) 219-8841 &middot; 0:47</span>
-                <span className="mockup-status-pill">Live</span>
-                <span className="mockup-handoff-btn">Transfer to staff</span>
-              </div>
-
-              <div className="mockup-body">
-                <div className="mockup-col-left">
-                  <div className="mockup-panel">
-                    <p className="mockup-panel-label">Live Transcript</p>
-                    <div className="mockup-transcript-lines">
-                      <p className="mockup-line-system">What would you like to order?</p>
-                      <p className="mockup-line-caller">Two large pepperoni pizzas with extra cheese, no onions, and a house salad with ranch.</p>
-                      <p className="mockup-line-system">Got it. Two large pepperoni with extra cheese, no onions. One house salad, ranch. Send to kitchen?</p>
-                      <p className="mockup-line-caller">Yes please.</p>
-                    </div>
-                  </div>
-                  <div className="mockup-panel">
-                    <p className="mockup-panel-label">Confidence</p>
-                    <div className="mockup-confidence">
-                      <div className="mockup-confidence-bar"><div className="mockup-confidence-fill" /></div>
-                      <span>96%</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mockup-col-right">
-                  <div className="mockup-panel">
-                    <p className="mockup-panel-label">Order Summary</p>
-                    <div className="mockup-order-line"><span>2x</span><strong>LG Pepperoni Pizza</strong></div>
-                    <p className="mockup-order-mod">+ Extra cheese &nbsp; - No onions</p>
-                    <div className="mockup-order-line"><span>1x</span><strong>House Salad</strong></div>
-                    <p className="mockup-order-mod">+ Ranch</p>
-                    <div className="mockup-order-total">
-                      <span>Total</span><strong>$38.48</strong>
-                    </div>
-                  </div>
-                  <div className="mockup-panel mockup-ticket-panel">
-                    <div className="mockup-ticket-header">
-                      <p className="mockup-panel-label">Kitchen Ticket</p>
-                      <span className="mockup-status-badge">Sent to printer</span>
-                    </div>
-                    <div className="mockup-ticket-body">
-                      <p>#147 &middot; PHONE &middot; 4:32p</p>
-                      <p>2 LG PEP +XTRA CHEESE -ONION</p>
-                      <p>1 HOUSE SALAD +RANCH</p>
-                      <p>────────────────────</p>
-                      <p>TOTAL $38.48</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
+      {/* ─── Product ─── */}
+      <section className="ed-product" id="product">
+        <div className="ed-product-split">
+          <div className="ed-product-text">
+            <h2>One dashboard.<br />Phone and online.</h2>
+            <p>Phone orders land in the same queue as your website orders. Accept, decline, print, or hand off to staff — all from one screen.</p>
+          </div>
+          <div className="ed-product-cards">
+            <div className="ed-pcard">
+              <span className="ed-pcard-label">Live calls</span>
+              <span className="ed-pcard-value">2 active</span>
+            </div>
+            <div className="ed-pcard">
+              <span className="ed-pcard-label">Pending</span>
+              <span className="ed-pcard-value">5 orders</span>
+            </div>
+            <div className="ed-pcard">
+              <span className="ed-pcard-label">Handoff</span>
+              <span className="ed-pcard-value">After 2 failures</span>
+            </div>
+            <div className="ed-pcard">
+              <span className="ed-pcard-label">Printer</span>
+              <span className="ed-pcard-value green">Online</span>
             </div>
           </div>
         </div>
       </section>
 
-      {/* ─── Value Strip ─── */}
-      <section className="lp-value-strip">
-        <div className="lp-value-strip-inner">
-          <div className="lp-value-card">
-            <span className="lp-value-num">01</span>
-            <h3>Answer every call</h3>
-            <p>No more missed orders during rush hour. gigi picks up instantly, every time.</p>
+      {/* ─── Control ─── */}
+      <section className="ed-control" id="control">
+        <h2>You decide when to take over.</h2>
+        <div className="ed-control-grid">
+          <div className="ed-control-item">
+            <h3>After one miss</h3>
+            <p>Can't match the item? Transfers immediately.</p>
           </div>
-          <div className="lp-value-card">
-            <span className="lp-value-num">02</span>
-            <h3>Send clean tickets</h3>
-            <p>Structured orders print to your kitchen exactly like online orders do.</p>
+          <div className="ed-control-item">
+            <h3>Complex orders</h3>
+            <p>Off-menu requests route to your staff.</p>
           </div>
-          <div className="lp-value-card">
-            <span className="lp-value-num">03</span>
-            <h3>Stay in control</h3>
-            <p>Set when gigi handles calls and when it transfers to your staff.</p>
+          <div className="ed-control-item">
+            <h3>Rush windows</h3>
+            <p>Schedule when GIGI answers and when it doesn't.</p>
           </div>
-        </div>
-      </section>
-
-      {/* ─── Product Section ─── */}
-      <section className="lp-product" id="product">
-        <div className="lp-section-header">
-          <p className="lp-label">Product</p>
-          <h2>One screen for every phone order.</h2>
-          <p className="lp-section-sub">Phone orders show up alongside online orders. Accept, decline, print, or hand off — all from the same dashboard your team already uses.</p>
-        </div>
-        <div className="lp-dashboard-preview">
-          <div className="lp-dash-card">
-            <div className="lp-dash-card-header"><span className="lp-dash-dot green" /><span>Live Calls</span></div>
-            <div className="lp-dash-card-body"><p className="lp-dash-metric">2</p><p className="lp-dash-caption">Active now</p></div>
+          <div className="ed-control-item">
+            <h3>Never</h3>
+            <p>Let it run. Customers can still ask for a person.</p>
           </div>
-          <div className="lp-dash-card">
-            <div className="lp-dash-card-header"><span className="lp-dash-dot amber" /><span>Pending Orders</span></div>
-            <div className="lp-dash-card-body"><p className="lp-dash-metric">5</p><p className="lp-dash-caption">Awaiting confirmation</p></div>
-          </div>
-          <div className="lp-dash-card">
-            <div className="lp-dash-card-header"><span className="lp-dash-dot blue" /><span>Handoff Rules</span></div>
-            <div className="lp-dash-card-body"><p className="lp-dash-rule">After 2 failed attempts</p><p className="lp-dash-caption">Transfer to +1 (555) 000-1234</p></div>
-          </div>
-          <div className="lp-dash-card">
-            <div className="lp-dash-card-header"><span className="lp-dash-dot green" /><span>Kitchen Printer</span></div>
-            <div className="lp-dash-card-body"><p className="lp-dash-rule">Connected</p><p className="lp-dash-caption">192.168.1.45:9100</p></div>
-          </div>
-        </div>
-      </section>
-
-      {/* ─── How It Works ─── */}
-      <section className="lp-how" id="how">
-        <div className="lp-section-header">
-          <p className="lp-label">How it works</p>
-          <h2>Three steps. No new hardware.</h2>
-        </div>
-        <div className="lp-steps">
-          <div className="lp-step"><div className="lp-step-num">1</div><h3>Customer calls your restaurant</h3><p>They dial your normal number. Twilio routes the call to gigi. The customer hears a greeting and starts ordering.</p></div>
-          <div className="lp-step"><div className="lp-step-num">2</div><h3>gigi captures the order</h3><p>Speech is transcribed, matched to your menu, and modifiers are confirmed. Required choices like size or dressing are asked automatically.</p></div>
-          <div className="lp-step"><div className="lp-step-num">3</div><h3>Restaurant confirms</h3><p>The structured order appears on your dashboard or prints directly to the kitchen. Accept, decline, or hand the call to staff.</p></div>
-        </div>
-      </section>
-
-      {/* ─── Control Section ─── */}
-      <section className="lp-handoff" id="control">
-        <div className="lp-section-header">
-          <p className="lp-label">Control</p>
-          <h2>You decide when gigi hands off.</h2>
-        </div>
-        <div className="lp-handoff-grid">
-          <div className="lp-handoff-card"><h3>After one unclear request</h3><p>If gigi can't match an item after one attempt, it transfers to your staff immediately.</p></div>
-          <div className="lp-handoff-card"><h3>For custom orders</h3><p>Complex modifications or off-menu items trigger a handoff so nothing gets lost.</p></div>
-          <div className="lp-handoff-card"><h3>During rush hours</h3><p>Schedule time windows where calls go straight to staff. gigi only answers when you want it to.</p></div>
-          <div className="lp-handoff-card"><h3>Never, unless asked</h3><p>Let gigi handle everything. Customers can still say "talk to a person" at any time to reach staff.</p></div>
         </div>
       </section>
 
       {/* ─── CTA ─── */}
-      <section className="lp-cta" id="cta">
-        <h2>Stop losing orders to voicemail.</h2>
-        <p>Set up takes under an hour. No new hardware. No long contracts.</p>
-        <div className="lp-cta-btns">
-          <a href="mailto:hello@getgigi.com" className="lp-btn-red">Book a Demo</a>
-          <Link to="/tablet/login" className="lp-btn-outline-dark">Try the Dashboard</Link>
-        </div>
+      <section className="ed-cta" id="cta">
+        <h2>Stop losing dinner rush orders.</h2>
+        <p>Set up in under an hour. No hardware. No contracts. Cancel whenever.</p>
+        <a href="mailto:hello@getgigi.com" className="ed-btn-primary">Book a demo</a>
       </section>
 
       {/* ─── Footer ─── */}
-      <footer className="lp-footer">
-        <div className="lp-footer-inner">
-          <div className="lp-footer-brand"><img src="/gigi-logo.png" alt="GIGI" /><span>GIGI</span></div>
-          <p>Automatic phone ordering for restaurants.</p>
+      <footer className="ed-footer">
+        <div className="ed-footer-left">
+          <img src="/gigi-logo.png" alt="GIGI" />
+          <span>GIGI</span>
         </div>
+        <p>Phone order automation for restaurants.</p>
       </footer>
     </main>
   );

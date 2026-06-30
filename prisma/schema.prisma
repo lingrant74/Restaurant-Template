@@ -22,7 +22,12 @@ model Restaurant {
   maxFailedAttempts         Int       @default(3)
   allowCustomerRequestHandoff Boolean @default(true)
   handoffPhoneNumber        String?
+  autoPrint                 Boolean   @default(false)
+  taxRate                   Decimal   @default(0) @db.Decimal(5, 4)
+  estimatedMinutes          Int       @default(20)
+  operatingHours            Json?
   menuItems   MenuItem[]
+  printers    Printer[]
   categories  MenuCategory[]
   modifierGroups ModifierGroup[]
   orders      Order[]
@@ -51,6 +56,7 @@ model MenuCategory {
   restaurantId Int
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   menuItems    MenuItem[]
+  printerLinks PrinterCategory[]
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
@@ -117,6 +123,7 @@ model MenuItemModifierGroup {
 
 model Order {
   id            Int         @id @default(autoincrement())
+  orderNumber   Int?
   customerName  String
   customerPhone String
   customerEmail String?
@@ -152,4 +159,29 @@ model OrderItem {
   menuItem   MenuItem? @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+}
+
+model Printer {
+  id           Int               @id @default(autoincrement())
+  name         String
+  ipAddress    String
+  port         Int               @default(9100)
+  type         String            @default("ESCPOS")
+  isDefault    Boolean           @default(false)
+  isOnline     Boolean           @default(true)
+  restaurantId Int
+  restaurant   Restaurant        @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  categories   PrinterCategory[]
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+}
+
+model PrinterCategory {
+  id         Int          @id @default(autoincrement())
+  printerId  Int
+  printer    Printer      @relation(fields: [printerId], references: [id], onDelete: Cascade)
+  categoryId Int
+  category   MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([printerId, categoryId])
 }
