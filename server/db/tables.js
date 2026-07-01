@@ -64,6 +64,18 @@ const TABLE_DEFINITIONS = [
     indexes: [gsi("restaurantId-index", "restaurantId", "N")]
   },
   {
+    TableName: TABLES.printer,
+    hashKey: { name: "id", type: "N" },
+    indexes: [gsi("restaurantId-index", "restaurantId", "N")]
+  },
+  {
+    // Join table: deterministic "printerId#categoryId" key makes the link
+    // unique and its creation idempotent (Prisma @@unique + createMany).
+    TableName: TABLES.printerCategory,
+    hashKey: { name: "linkKey", type: "S" },
+    indexes: [gsi("printerId-index", "printerId", "N"), gsi("categoryId-index", "categoryId", "N")]
+  },
+  {
     TableName: TABLES.counters,
     hashKey: { name: "name", type: "S" },
     indexes: []

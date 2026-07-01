@@ -35,6 +35,10 @@ function mapRestaurant(item) {
     maxFailedAttempts: item.maxFailedAttempts ?? 3,
     allowCustomerRequestHandoff: item.allowCustomerRequestHandoff ?? true,
     handoffPhoneNumber: item.handoffPhoneNumber ?? null,
+    autoPrint: item.autoPrint ?? false,
+    taxRate: item.taxRate ?? 0,
+    estimatedMinutes: item.estimatedMinutes ?? 20,
+    operatingHours: item.operatingHours ?? null,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt
   };
@@ -137,6 +141,7 @@ function mapOrder(item) {
   items.sort((a, b) => a.id - b.id);
   return {
     id: item.id,
+    orderNumber: item.orderNumber ?? null,
     customerName: item.customerName,
     customerPhone: item.customerPhone,
     customerEmail: item.customerEmail ?? null,
@@ -284,11 +289,10 @@ async function getRestaurantWithMenu(id) {
   return { ...restaurant, categories, menuItems };
 }
 
-async function getRestaurantBySlugWithPublicMenu(slug) {
-  const raw = await findRestaurantBySlug(slug);
-  if (!raw) return null;
-  const restaurant = mapRestaurant(raw);
-
+// Attaches sorted categories and available menu items (each with its category
+// and modifier groups, available options only) to a restaurant. Shared by the
+// public page (by slug) and the Vapi menu endpoint (by id).
+async function attachPublicMenu(restaurant) {
   const [categories, availableItems] = await Promise.all([
     listCategories(restaurant.id),
     listMenuItemsForRestaurant(restaurant.id, { isAvailable: true })
@@ -303,6 +307,18 @@ async function getRestaurantBySlugWithPublicMenu(slug) {
   );
 
   return { ...restaurant, categories, menuItems };
+}
+
+async function getRestaurantBySlugWithPublicMenu(slug) {
+  const raw = await findRestaurantBySlug(slug);
+  if (!raw) return null;
+  return attachPublicMenu(mapRestaurant(raw));
+}
+
+async function getRestaurantByIdWithPublicMenu(id) {
+  const restaurant = await getRestaurantById(id);
+  if (!restaurant) return null;
+  return attachPublicMenu(restaurant);
 }
 
 async function getLiveOrdersInfo(id) {
@@ -760,6 +776,137 @@ async function updateOrder(id, data) {
   return mapOrder(await updateItem(TABLES.order, { id }, data));
 }
 
+// ── Printer / PrinterCategory ────────────────────────────────────────────────
+
+function mapPrinter(item) {
+  if (!item) return null;
+  return {
+    id: item.id,
+    name: item.name,
+    ipAddress: item.ipAddress,
+    port: item.port ?? 9100,
+    type: item.type ?? "ESCPOS",
+    isDefault: item.isDefault ?? false,
+    isOnline: item.isOnline ?? true,
+    restaurantId: item.restaurantId,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt
+  };
+}
+
+function printerLinkKey(printerId, categoryId) {
+  return `${printerId}#${categoryId}`;
+}
+
+// Category assignments for a printer, shaped like Prisma's
+// include: { categories: { include: { category: true } } }.
+async function assemblePrinterCategories(printerId) {
+  const links = await queryByIndex(TABLES.printerCategory, "printerId-index", "printerId", printerId);
+  return Promise.all(
+    links.map(async (link) => ({
+      printerId: link.printerId,
+      categoryId: link.categoryId,
+      category: await getCategory(link.categoryId)
+    }))
+  );
+}
+
+async function getPrinterRaw(id) {
+  return getItem(TABLES.printer, { id });
+}
+
+async function attachPrinterCategories(printer) {
+  return { ...printer, categories: await assemblePrinterCategories(printer.id) };
+}
+
+async function getPrinter(id) {
+  const printer = mapPrinter(await getPrinterRaw(id));
+  if (!printer) return null;
+  return attachPrinterCategories(printer);
+}
+
+async function listPrintersForRestaurant(restaurantId) {
+  const printers = (await queryByIndex(TABLES.printer, "restaurantId-index", "restaurantId", restaurantId))
+    .map(mapPrinter)
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  return Promise.all(printers.map(attachPrinterCategories));
+}
+
+async function listOnlinePrinters(restaurantId) {
+  const printers = await listPrintersForRestaurant(restaurantId);
+  return printers.filter((printer) => printer.isOnline);
+}
+
+// Clears isDefault on a restaurant's printers, optionally excluding one id.
+async function unsetDefaultPrinters(restaurantId, exceptId) {
+  const printers = await queryByIndex(TABLES.printer, "restaurantId-index", "restaurantId", restaurantId);
+  await Promise.all(
+    printers
+      .filter((printer) => printer.isDefault && printer.id !== exceptId)
+      .map((printer) => updateItem(TABLES.printer, { id: printer.id }, { isDefault: false }))
+  );
+}
+
+async function createPrinter(data) {
+  if (data.isDefault) {
+    await unsetDefaultPrinters(data.restaurantId);
+  }
+
+  const timestamp = nowIso();
+  const stored = {
+    id: await nextId("Printer"),
+    name: data.name,
+    ipAddress: data.ipAddress,
+    port: data.port ?? 9100,
+    type: data.type ?? "ESCPOS",
+    isDefault: Boolean(data.isDefault),
+    isOnline: data.isOnline ?? true,
+    restaurantId: data.restaurantId,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+  await putItem(TABLES.printer, stored);
+  return { ...mapPrinter(stored), categories: [] };
+}
+
+async function updatePrinter(id, data) {
+  // When promoting to default, demote the restaurant's other printers first.
+  if (data.isDefault === true) {
+    const existing = await getPrinterRaw(id);
+    if (existing) {
+      await unsetDefaultPrinters(existing.restaurantId, id);
+    }
+  }
+
+  const updated = mapPrinter(await updateItem(TABLES.printer, { id }, data));
+  return attachPrinterCategories(updated);
+}
+
+async function deletePrinter(id) {
+  const removed = await deleteItem(TABLES.printer, { id }, { requireExists: true });
+  const links = await queryByIndex(TABLES.printerCategory, "printerId-index", "printerId", id);
+  await Promise.all(links.map((link) => deleteItem(TABLES.printerCategory, { linkKey: link.linkKey })));
+  return mapPrinter(removed);
+}
+
+// Replaces a printer's category assignments (idempotent via the linkKey).
+async function setPrinterCategories(printerId, categoryIds) {
+  const existing = await queryByIndex(TABLES.printerCategory, "printerId-index", "printerId", printerId);
+  await Promise.all(existing.map((link) => deleteItem(TABLES.printerCategory, { linkKey: link.linkKey })));
+
+  const timestamp = nowIso();
+  await Promise.all(
+    categoryIds.map((categoryId) =>
+      putItem(TABLES.printerCategory, {
+        linkKey: printerLinkKey(printerId, categoryId),
+        printerId,
+        categoryId,
+        createdAt: timestamp
+      })
+    )
+  );
+}
+
 module.exports = {
   // Restaurant
   getRestaurantById,
@@ -769,6 +916,7 @@ module.exports = {
   listRestaurants,
   getRestaurantWithMenu,
   getRestaurantBySlugWithPublicMenu,
+  getRestaurantByIdWithPublicMenu,
   getLiveOrdersInfo,
   updateRestaurant,
   // RestaurantUser
@@ -810,5 +958,13 @@ module.exports = {
   getOrder,
   listOrdersForRestaurant,
   listPrintableOrders,
-  updateOrder
+  updateOrder,
+  // Printer / PrinterCategory
+  createPrinter,
+  getPrinter,
+  listPrintersForRestaurant,
+  listOnlinePrinters,
+  updatePrinter,
+  deletePrinter,
+  setPrinterCategories
 };
