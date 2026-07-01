@@ -1,4 +1,4 @@
-const prisma = require("./prismaClient");
+const db = require("./db/repositories");
 
 const NUMBER_WORDS = {
   a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5,
@@ -17,9 +17,7 @@ const FILLER = new Set([
  * Returns { matchedItems, unmatchedText }.
  */
 async function parseVoiceOrder(speechResult, restaurantId) {
-  const menuItems = await prisma.menuItem.findMany({
-    where: { restaurantId, isAvailable: true },
-  });
+  const menuItems = await db.listMenuItemsForRestaurant(restaurantId, { isAvailable: true });
 
   const menu = menuItems.map((item) => ({
     id: item.id,
@@ -168,20 +166,7 @@ function wordsMatch(spoken, menuWord) {
  * Returns an array of groups with their available options.
  */
 async function loadItemModifiers(menuItemId) {
-  const links = await prisma.menuItemModifierGroup.findMany({
-    where: { menuItemId },
-    include: {
-      modifierGroup: {
-        include: {
-          options: {
-            where: { available: true },
-            orderBy: [{ sort: "asc" }, { name: "asc" }],
-          },
-        },
-      },
-    },
-    orderBy: { modifierGroup: { sort: "asc" } },
-  });
+  const links = await db.assembleModifierLinks(menuItemId, { availableOptionsOnly: true });
 
   return links.map((link) => ({
     groupId: link.modifierGroup.id,

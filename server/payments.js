@@ -1,4 +1,4 @@
-const prisma = require("./prismaClient");
+const db = require("./db/repositories");
 const { getStripeClient } = require("./stripe");
 
 // Payment lifecycle (Option B: authorize at checkout, capture on accept):
@@ -63,7 +63,7 @@ async function applySessionToOrder(session) {
     return null;
   }
 
-  const existing = await prisma.order.findUnique({ where: { id: orderId } });
+  const existing = await db.getOrder(orderId);
 
   if (!existing) {
     return null;
@@ -74,14 +74,11 @@ async function applySessionToOrder(session) {
     return existing;
   }
 
-  return prisma.order
-    .update({
-      where: { id: orderId },
-      data: {
-        paymentStatus,
-        stripePaymentIntentId: paymentIntentId,
-        stripeSessionId: session.id
-      }
+  return db
+    .updateOrder(orderId, {
+      paymentStatus,
+      stripePaymentIntentId: paymentIntentId,
+      stripeSessionId: session.id
     })
     .catch(() => null);
 }

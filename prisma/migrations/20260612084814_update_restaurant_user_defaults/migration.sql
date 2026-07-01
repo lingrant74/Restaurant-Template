@@ -1,3 +1,0 @@
--- AlterTable
-ALTER TABLE "RestaurantUser" ALTER COLUMN "role" SET DEFAULT 'OWNER',
-ALTER COLUMN "status" SET DEFAULT 'APPROVED';

@@ -1,7 +1,7 @@
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const { OAuth2Client } = require("google-auth-library");
-const prisma = require("./prismaClient");
+const db = require("./db/repositories");
 
 const authRouter = express.Router();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -194,14 +194,7 @@ function requireOrderAccess() {
         });
       }
 
-      const order = await prisma.order.findUnique({
-        where: {
-          id: orderId
-        },
-        select: {
-          restaurantId: true
-        }
-      });
+      const order = await db.getOrder(orderId);
 
       if (!order) {
         return res.status(404).json({
@@ -272,11 +265,7 @@ authRouter.post("/api/auth/google", async (req, res, next) => {
         role: roles.platformAdmin
       });
     } else {
-      const restaurantUser = await prisma.restaurantUser.findUnique({
-        where: {
-          email
-        }
-      });
+      const restaurantUser = await db.getRestaurantUserByEmail(email);
 
       if (!restaurantUser) {
         return res.status(403).json({
@@ -291,14 +280,9 @@ authRouter.post("/api/auth/google", async (req, res, next) => {
         });
       }
 
-      await prisma.restaurantUser.update({
-        where: {
-          id: restaurantUser.id
-        },
-        data: {
-          name: payload.name || restaurantUser.name,
-          picture: payload.picture || restaurantUser.picture
-        }
+      await db.updateRestaurantUser(restaurantUser.id, {
+        name: payload.name || restaurantUser.name,
+        picture: payload.picture || restaurantUser.picture
       });
 
       user = createSessionUser({

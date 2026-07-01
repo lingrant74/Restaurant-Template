@@ -6,17 +6,15 @@
   "scripts": {
     "dev": "nodemon server/server.js",
     "start": "node server/server.js",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
-  },
-  "prisma": {
-    "seed": "node prisma/seed.js"
+    "db:create-tables": "node scripts/create-tables.js",
+    "db:seed": "node scripts/seed.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@prisma/client": "^6.19.3",
+    "@aws-sdk/client-dynamodb": "^3.1076.0",
+    "@aws-sdk/lib-dynamodb": "^3.1076.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
@@ -27,7 +25,6 @@
     "twilio": "^6.0.2"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14",
-    "prisma": "^6.19.3"
+    "nodemon": "^3.1.14"
   }
 }

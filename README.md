@@ -4,9 +4,48 @@ A full-stack restaurant ordering platform with a Node.js/Express backend, React 
 
 ---
 
+## Quick Start with Docker (recommended)
+
+Run the database, backend, and frontend together with a single command. Requires Docker with the Compose plugin.
+
+```bash
+docker compose up --build
+```
+
+This starts three containers:
+
+| Service    | URL                     | Notes                                                          |
+| ---------- | ----------------------- | -------------------------------------------------------------- |
+| `dynamodb` | `localhost:8000`        | DynamoDB Local, data persisted in a named volume.              |
+| `backend`  | `http://localhost:3000` | Creates DynamoDB tables and seeds sample data on start.        |
+| `frontend` | `http://localhost:5173` | Vite dev server; proxies API calls to the backend container.   |
+
+Then open the seeded restaurant page: <http://localhost:5173/joes-pizza>
+
+Notes:
+
+- The backend container automatically runs `scripts/create-tables.js` and seeds **Joe's Pizza** (sample menu + modifiers) on every start (seeding is idempotent).
+- `ADMIN_AUTH_BYPASS=true` is enabled in `docker-compose.yml` so the admin UI works without Google sign-in for local development. The tablet dev token (`dev-tablet-token`, restaurant `1`) is also preconfigured.
+- External integrations (Stripe, Twilio, Google sign-in) are **optional** and off by default. To enable them, add the relevant keys to the `backend` service's `environment:` block in `docker-compose.yml` (`STRIPE_SECRET_KEY`, `GOOGLE_CLIENT_ID`, etc.).
+- Source folders are bind-mounted, so edits to `server/` and `client/` hot-reload inside the containers.
+- The **Android tablet app** is not containerized — see [Android Tablet App](#android-tablet-app) below. Point it at `http://10.0.2.2:3000` from an emulator.
+
+Common commands:
+
+```bash
+docker compose up --build -d   # start in the background
+docker compose logs -f backend # follow backend logs
+docker compose down            # stop (keeps the database volume)
+docker compose down -v         # stop and wipe the database
+```
+
+The sections below describe running each piece directly on your host instead.
+
+---
+
 ## Backend
 
-Node.js, Express, Prisma, and PostgreSQL API server.
+Node.js + Express API server backed by Amazon DynamoDB (via the AWS SDK v3).
 
 **Location:** `server/`
 
@@ -18,18 +57,20 @@ Node.js, Express, Prisma, and PostgreSQL API server.
    npm install
    ```
 
-2. Start PostgreSQL with Docker:
+2. Start DynamoDB Local with Docker:
 
    ```bash
-   docker compose up -d
+   docker compose up -d dynamodb
    ```
 
-3. Check `.env` and update `DATABASE_URL` if your PostgreSQL username or password is different.
+3. Copy `.env.example` to `.env`. The defaults already point at DynamoDB Local
+   (`DYNAMODB_ENDPOINT=http://localhost:8000` with throwaway credentials).
 
-4. Create the database tables:
+4. Create the DynamoDB tables and seed sample data:
 
    ```bash
-   npm run prisma:migrate -- --name init
+   npm run db:create-tables
+   npm run db:seed
    ```
 
 5. Start the API server:
@@ -39,6 +80,10 @@ Node.js, Express, Prisma, and PostgreSQL API server.
    ```
 
 Open `http://localhost:3000` to check that the API is running.
+
+> **Real AWS:** unset `DYNAMODB_ENDPOINT` and provide a real `AWS_REGION` plus
+> credentials (env vars, a shared credentials file, or an instance role). Run
+> `npm run db:create-tables` once against the account to provision the tables.
 
 ### Test Requests
 

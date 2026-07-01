@@ -1,5 +1,5 @@
 const express = require("express");
-const prisma = require("../prismaClient");
+const db = require("../db/repositories");
 const { requireOrderAccess, requirePlatformAdmin, requireRestaurantAccess } = require("../auth");
 const { getStripeClient, isStripeConfigured } = require("../stripe");
 const { applySessionToOrder, captureOrderPayment, voidOrderPayment, calculatePlatformFeeCents } = require("../payments");
@@ -47,58 +47,6 @@ function sendOrder(res, statusCode, order) {
     // Keep this alias for any older frontend code that still reads subtotal.
     subtotal: order.total
   });
-}
-
-function orderInclude() {
-  return {
-    items: {
-      orderBy: {
-        id: "asc"
-      }
-    }
-  };
-}
-
-function modifierGroupInclude() {
-  return {
-    options: {
-      orderBy: [
-        {
-          sort: "asc"
-        },
-        {
-          name: "asc"
-        }
-      ]
-    }
-  };
-}
-
-function publicMenuItemInclude() {
-  return {
-    menuCategory: true,
-    modifierGroupLinks: {
-      include: {
-        modifierGroup: {
-          include: {
-            options: {
-              where: {
-                available: true
-              },
-              orderBy: [
-                {
-                  sort: "asc"
-                },
-                {
-                  name: "asc"
-                }
-              ]
-            }
-          }
-        }
-      }
-    }
-  };
 }
 
 function normalizeModifierSelections(selectedModifiers = []) {
@@ -195,26 +143,7 @@ function buildOrderItemSnapshot(menuItem, orderItem) {
 // 400 by the order/checkout routes). Shared by the direct-order and Stripe flows.
 async function buildOrderDraft(restaurantId, items) {
   const menuItemIds = items.map((item) => Number(item.menuItemId));
-  const menuItems = await prisma.menuItem.findMany({
-    where: {
-      id: {
-        in: menuItemIds
-      },
-      restaurantId,
-      isAvailable: true
-    },
-    include: {
-      modifierGroupLinks: {
-        include: {
-          modifierGroup: {
-            include: {
-              options: true
-            }
-          }
-        }
-      }
-    }
-  });
+  const menuItems = await db.getOrderableMenuItems(restaurantId, menuItemIds);
 
   const menuItemsById = new Map(menuItems.map((item) => [item.id, item]));
   const orderItems = [];
@@ -256,45 +185,24 @@ router.post("/restaurants", requirePlatformAdmin, async (req, res, next) => {
       });
     }
 
-    const restaurant = await prisma.$transaction(async (tx) => {
-      const createdRestaurant = await tx.restaurant.create({
-        data: {
-          name,
-          slug: slug || createSlug(name),
-          description,
-          address,
-          phone,
-          websiteUrl,
-          themeColor,
-          categories: {
-            create: createDefaultCategories()
-          }
-        },
-        include: {
-          categories: {
-            orderBy: {
-              sortOrder: "asc"
-            }
-          }
-        }
-      });
-
-      await tx.restaurantUser.create({
-        data: {
-          restaurantId: createdRestaurant.id,
-          email: ownerEmail,
-          role: "OWNER",
-          status: "APPROVED"
-        }
-      });
-
-      return createdRestaurant;
+    const restaurant = await db.createRestaurantWithDefaults({
+      restaurant: {
+        name,
+        slug: slug || createSlug(name),
+        description,
+        address,
+        phone,
+        websiteUrl,
+        themeColor
+      },
+      categories: createDefaultCategories(),
+      ownerEmail
     });
 
     res.status(201).json(restaurant);
   } catch (err) {
-    if (err.code === "P2002") {
-      if (Array.isArray(err.meta?.target) && err.meta.target.includes("email")) {
+    if (err.code === "UNIQUE") {
+      if (Array.isArray(err.target) && err.target.includes("email")) {
         return res.status(409).json({
           error: "That email is already assigned to a restaurant"
         });
@@ -313,32 +221,7 @@ router.post("/restaurants", requirePlatformAdmin, async (req, res, next) => {
 // Lists restaurants with a simple menu item count.
 router.get("/restaurants", requirePlatformAdmin, async (req, res, next) => {
   try {
-    const restaurants = await prisma.restaurant.findMany({
-      orderBy: {
-        createdAt: "desc"
-      },
-      include: {
-        categories: {
-          orderBy: {
-            sortOrder: "asc"
-          }
-        },
-        menuItems: {
-          include: {
-            menuCategory: true
-          },
-          orderBy: {
-            name: "asc"
-          }
-        },
-        _count: {
-          select: {
-            menuItems: true
-          }
-        }
-      }
-    });
-
+    const restaurants = await db.listRestaurants();
     res.json(restaurants);
   } catch (err) {
     next(err);
@@ -357,26 +240,7 @@ router.get("/restaurants/:id", requirePlatformAdmin, async (req, res, next) => {
       });
     }
 
-    const restaurant = await prisma.restaurant.findUnique({
-      where: {
-        id
-      },
-      include: {
-        categories: {
-          orderBy: {
-            sortOrder: "asc"
-          }
-        },
-        menuItems: {
-          include: {
-            menuCategory: true
-          },
-          orderBy: {
-            name: "asc"
-          }
-        }
-      }
-    });
+    const restaurant = await db.getRestaurantWithMenu(id);
 
     if (!restaurant) {
       return res.status(404).json({
@@ -409,11 +273,7 @@ router.post("/restaurants/:restaurantId/menu-items", requirePlatformAdmin, async
       });
     }
 
-    const restaurant = await prisma.restaurant.findUnique({
-      where: {
-        id: restaurantId
-      }
-    });
+    const restaurant = await db.getRestaurantById(restaurantId);
 
     if (!restaurant) {
       return res.status(404).json({
@@ -424,12 +284,7 @@ router.post("/restaurants/:restaurantId/menu-items", requirePlatformAdmin, async
     const selectedCategoryId = categoryId ? Number(categoryId) : null;
 
     if (selectedCategoryId) {
-      const menuCategory = await prisma.menuCategory.findFirst({
-        where: {
-          id: selectedCategoryId,
-          restaurantId
-        }
-      });
+      const menuCategory = await db.getCategoryForRestaurant(selectedCategoryId, restaurantId);
 
       if (!menuCategory) {
         return res.status(400).json({
@@ -438,20 +293,15 @@ router.post("/restaurants/:restaurantId/menu-items", requirePlatformAdmin, async
       }
     }
 
-    const menuItem = await prisma.menuItem.create({
-      data: {
-        name,
-        description,
-        imageUrl,
-        category,
-        categoryId: selectedCategoryId,
-        price,
-        isAvailable,
-        restaurantId
-      },
-      include: {
-        menuCategory: true
-      }
+    const menuItem = await db.createMenuItem({
+      name,
+      description,
+      imageUrl,
+      category,
+      categoryId: selectedCategoryId,
+      price,
+      isAvailable,
+      restaurantId
     });
 
     res.status(201).json(menuItem);
@@ -479,17 +329,15 @@ router.post("/restaurants/:restaurantId/categories", requirePlatformAdmin, async
       });
     }
 
-    const category = await prisma.menuCategory.create({
-      data: {
-        name,
-        sortOrder: sortOrder === undefined ? 0 : Number(sortOrder),
-        restaurantId
-      }
+    const category = await db.createCategory({
+      name,
+      sortOrder: sortOrder === undefined ? 0 : Number(sortOrder),
+      restaurantId
     });
 
     res.status(201).json(category);
   } catch (err) {
-    if (err.code === "P2002") {
+    if (err.code === "UNIQUE") {
       return res.status(409).json({
         error: "That category already exists for this restaurant"
       });
@@ -511,16 +359,7 @@ router.get("/api/restaurants/:restaurantId/users", requirePlatformAdmin, async (
       });
     }
 
-    const users = await prisma.restaurantUser.findMany({
-      where: {
-        restaurantId
-      },
-      orderBy: [
-        {
-          createdAt: "desc"
-        }
-      ]
-    });
+    const users = await db.listRestaurantUsers(restaurantId);
 
     res.json(users);
   } catch (err) {
@@ -562,11 +401,7 @@ router.post("/api/restaurants/:restaurantId/users", requirePlatformAdmin, async 
       });
     }
 
-    const restaurant = await prisma.restaurant.findUnique({
-      where: {
-        id: restaurantId
-      }
-    });
+    const restaurant = await db.getRestaurantById(restaurantId);
 
     if (!restaurant) {
       return res.status(404).json({
@@ -574,19 +409,17 @@ router.post("/api/restaurants/:restaurantId/users", requirePlatformAdmin, async 
       });
     }
 
-    const user = await prisma.restaurantUser.create({
-      data: {
-        restaurantId,
-        email,
-        name,
-        role: selectedRole,
-        status: selectedStatus
-      }
+    const user = await db.createRestaurantUser({
+      restaurantId,
+      email,
+      name,
+      role: selectedRole,
+      status: selectedStatus
     });
 
     res.status(201).json(user);
   } catch (err) {
-    if (err.code === "P2002") {
+    if (err.code === "UNIQUE") {
       return res.status(409).json({
         error: "That email is already assigned to a restaurant"
       });
@@ -623,20 +456,15 @@ router.patch("/api/restaurant-users/:userId", requirePlatformAdmin, async (req, 
       });
     }
 
-    const user = await prisma.restaurantUser.update({
-      where: {
-        id: userId
-      },
-      data: {
-        name,
-        role: selectedRole,
-        status: selectedStatus
-      }
+    const user = await db.updateRestaurantUser(userId, {
+      name,
+      role: selectedRole,
+      status: selectedStatus
     });
 
     res.json(user);
   } catch (err) {
-    if (err.code === "P2025") {
+    if (err.code === "NOT_FOUND") {
       return res.status(404).json({
         error: "Restaurant user not found"
       });
@@ -658,18 +486,14 @@ router.delete("/api/restaurant-users/:userId", requirePlatformAdmin, async (req,
       });
     }
 
-    const user = await prisma.restaurantUser.delete({
-      where: {
-        id: userId
-      }
-    });
+    const user = await db.deleteRestaurantUser(userId);
 
     res.json({
       message: "Restaurant user removed",
       user
     });
   } catch (err) {
-    if (err.code === "P2025") {
+    if (err.code === "NOT_FOUND") {
       return res.status(404).json({
         error: "Restaurant user not found"
       });
@@ -691,20 +515,7 @@ router.get("/api/restaurants/:restaurantId/modifier-groups", requirePlatformAdmi
       });
     }
 
-    const modifierGroups = await prisma.modifierGroup.findMany({
-      where: {
-        restaurantId
-      },
-      include: modifierGroupInclude(),
-      orderBy: [
-        {
-          sort: "asc"
-        },
-        {
-          name: "asc"
-        }
-      ]
-    });
+    const modifierGroups = await db.listModifierGroups(restaurantId);
 
     res.json(modifierGroups);
   } catch (err) {
@@ -731,22 +542,19 @@ router.post("/api/restaurants/:restaurantId/modifier-groups", requirePlatformAdm
       });
     }
 
-    const modifierGroup = await prisma.modifierGroup.create({
-      data: {
-        restaurantId,
-        name,
-        required: Boolean(required),
-        allowMultiple: Boolean(allowMultiple),
-        minSelections: minSelections === undefined || minSelections === "" ? 0 : Number(minSelections),
-        maxSelections: maxSelections === undefined || maxSelections === "" ? null : Number(maxSelections),
-        sort: sort === undefined || sort === "" ? 0 : Number(sort)
-      },
-      include: modifierGroupInclude()
+    const modifierGroup = await db.createModifierGroup({
+      restaurantId,
+      name,
+      required: Boolean(required),
+      allowMultiple: Boolean(allowMultiple),
+      minSelections: minSelections === undefined || minSelections === "" ? 0 : Number(minSelections),
+      maxSelections: maxSelections === undefined || maxSelections === "" ? null : Number(maxSelections),
+      sort: sort === undefined || sort === "" ? 0 : Number(sort)
     });
 
     res.status(201).json(modifierGroup);
   } catch (err) {
-    if (err.code === "P2002") {
+    if (err.code === "UNIQUE") {
       return res.status(409).json({
         error: "That modifier group already exists for this restaurant"
       });
@@ -775,30 +583,24 @@ router.patch("/api/modifier-groups/:groupId", requirePlatformAdmin, async (req, 
       });
     }
 
-    const modifierGroup = await prisma.modifierGroup.update({
-      where: {
-        id: groupId
-      },
-      data: {
-        name,
-        required: Boolean(required),
-        allowMultiple: Boolean(allowMultiple),
-        minSelections: minSelections === undefined || minSelections === "" ? 0 : Number(minSelections),
-        maxSelections: maxSelections === undefined || maxSelections === "" ? null : Number(maxSelections),
-        sort: sort === undefined || sort === "" ? 0 : Number(sort)
-      },
-      include: modifierGroupInclude()
+    const modifierGroup = await db.updateModifierGroup(groupId, {
+      name,
+      required: Boolean(required),
+      allowMultiple: Boolean(allowMultiple),
+      minSelections: minSelections === undefined || minSelections === "" ? 0 : Number(minSelections),
+      maxSelections: maxSelections === undefined || maxSelections === "" ? null : Number(maxSelections),
+      sort: sort === undefined || sort === "" ? 0 : Number(sort)
     });
 
     res.json(modifierGroup);
   } catch (err) {
-    if (err.code === "P2025") {
+    if (err.code === "NOT_FOUND") {
       return res.status(404).json({
         error: "Modifier group not found"
       });
     }
 
-    if (err.code === "P2002") {
+    if (err.code === "UNIQUE") {
       return res.status(409).json({
         error: "That modifier group already exists for this restaurant"
       });
@@ -820,18 +622,14 @@ router.delete("/api/modifier-groups/:groupId", requirePlatformAdmin, async (req,
       });
     }
 
-    const modifierGroup = await prisma.modifierGroup.delete({
-      where: {
-        id: groupId
-      }
-    });
+    const modifierGroup = await db.deleteModifierGroup(groupId);
 
     res.json({
       message: "Modifier group deleted",
       modifierGroup
     });
   } catch (err) {
-    if (err.code === "P2025") {
+    if (err.code === "NOT_FOUND") {
       return res.status(404).json({
         error: "Modifier group not found"
       });
@@ -860,14 +658,12 @@ router.post("/api/modifier-groups/:groupId/options", requirePlatformAdmin, async
       });
     }
 
-    const option = await prisma.modifierOption.create({
-      data: {
-        modifierGroupId: groupId,
-        name,
-        priceDelta: priceDelta === undefined || priceDelta === "" ? 0 : priceDelta,
-        sort: sort === undefined || sort === "" ? 0 : Number(sort),
-        available: available === undefined ? true : Boolean(available)
-      }
+    const option = await db.createModifierOption({
+      modifierGroupId: groupId,
+      name,
+      priceDelta: priceDelta === undefined || priceDelta === "" ? 0 : priceDelta,
+      sort: sort === undefined || sort === "" ? 0 : Number(sort),
+      available: available === undefined ? true : Boolean(available)
     });
 
     res.status(201).json(option);
@@ -895,21 +691,16 @@ router.patch("/api/modifier-options/:optionId", requirePlatformAdmin, async (req
       });
     }
 
-    const option = await prisma.modifierOption.update({
-      where: {
-        id: optionId
-      },
-      data: {
-        name,
-        priceDelta: priceDelta === undefined || priceDelta === "" ? 0 : priceDelta,
-        sort: sort === undefined || sort === "" ? 0 : Number(sort),
-        available: available === undefined ? true : Boolean(available)
-      }
+    const option = await db.updateModifierOption(optionId, {
+      name,
+      priceDelta: priceDelta === undefined || priceDelta === "" ? 0 : priceDelta,
+      sort: sort === undefined || sort === "" ? 0 : Number(sort),
+      available: available === undefined ? true : Boolean(available)
     });
 
     res.json(option);
   } catch (err) {
-    if (err.code === "P2025") {
+    if (err.code === "NOT_FOUND") {
       return res.status(404).json({
         error: "Modifier option not found"
       });
@@ -931,18 +722,14 @@ router.delete("/api/modifier-options/:optionId", requirePlatformAdmin, async (re
       });
     }
 
-    const option = await prisma.modifierOption.delete({
-      where: {
-        id: optionId
-      }
-    });
+    const option = await db.deleteModifierOption(optionId);
 
     res.json({
       message: "Modifier option deleted",
       option
     });
   } catch (err) {
-    if (err.code === "P2025") {
+    if (err.code === "NOT_FOUND") {
       return res.status(404).json({
         error: "Modifier option not found"
       });
@@ -964,20 +751,7 @@ router.get("/api/menu-items/:menuItemId/modifier-groups", requirePlatformAdmin, 
       });
     }
 
-    const menuItem = await prisma.menuItem.findUnique({
-      where: {
-        id: menuItemId
-      },
-      include: {
-        modifierGroupLinks: {
-          include: {
-            modifierGroup: {
-              include: modifierGroupInclude()
-            }
-          }
-        }
-      }
-    });
+    const menuItem = await db.getMenuItem(menuItemId);
 
     if (!menuItem) {
       return res.status(404).json({
@@ -985,7 +759,8 @@ router.get("/api/menu-items/:menuItemId/modifier-groups", requirePlatformAdmin, 
       });
     }
 
-    res.json(menuItem.modifierGroupLinks.map((link) => link.modifierGroup));
+    const links = await db.assembleModifierLinks(menuItemId);
+    res.json(links.map((link) => link.modifierGroup));
   } catch (err) {
     next(err);
   }
@@ -1004,11 +779,7 @@ router.put("/api/menu-items/:menuItemId/modifier-groups", requirePlatformAdmin, 
       });
     }
 
-    const menuItem = await prisma.menuItem.findUnique({
-      where: {
-        id: menuItemId
-      }
-    });
+    const menuItem = await db.getMenuItem(menuItemId);
 
     if (!menuItem) {
       return res.status(404).json({
@@ -1017,14 +788,7 @@ router.put("/api/menu-items/:menuItemId/modifier-groups", requirePlatformAdmin, 
     }
 
     const uniqueGroupIds = [...new Set(modifierGroupIds)].filter((id) => Number.isInteger(id));
-    const modifierGroups = await prisma.modifierGroup.findMany({
-      where: {
-        id: {
-          in: uniqueGroupIds
-        },
-        restaurantId: menuItem.restaurantId
-      }
-    });
+    const modifierGroups = await db.listModifierGroupsByIds(menuItem.restaurantId, uniqueGroupIds);
 
     if (modifierGroups.length !== uniqueGroupIds.length) {
       return res.status(400).json({
@@ -1032,38 +796,10 @@ router.put("/api/menu-items/:menuItemId/modifier-groups", requirePlatformAdmin, 
       });
     }
 
-    await prisma.menuItemModifierGroup.deleteMany({
-      where: {
-        menuItemId
-      }
-    });
+    await db.setMenuItemModifierGroups(menuItemId, uniqueGroupIds);
 
-    if (uniqueGroupIds.length > 0) {
-      await prisma.menuItemModifierGroup.createMany({
-        data: uniqueGroupIds.map((modifierGroupId) => ({
-          menuItemId,
-          modifierGroupId
-        })),
-        skipDuplicates: true
-      });
-    }
-
-    const updatedMenuItem = await prisma.menuItem.findUnique({
-      where: {
-        id: menuItemId
-      },
-      include: {
-        modifierGroupLinks: {
-          include: {
-            modifierGroup: {
-              include: modifierGroupInclude()
-            }
-          }
-        }
-      }
-    });
-
-    res.json(updatedMenuItem.modifierGroupLinks.map((link) => link.modifierGroup));
+    const links = await db.assembleModifierLinks(menuItemId);
+    res.json(links.map((link) => link.modifierGroup));
   } catch (err) {
     next(err);
   }
@@ -1101,11 +837,7 @@ router.post(["/api/restaurants/:restaurantId/orders", "/restaurants/:restaurantI
       });
     }
 
-    const restaurant = await prisma.restaurant.findUnique({
-      where: {
-        id: restaurantId
-      }
-    });
+    const restaurant = await db.getRestaurantById(restaurantId);
 
     if (!restaurant) {
       return res.status(404).json({
@@ -1115,24 +847,17 @@ router.post(["/api/restaurants/:restaurantId/orders", "/restaurants/:restaurantI
 
     const { orderItems, total } = await buildOrderDraft(restaurantId, items);
 
-    const order = await prisma.order.create({
-      data: {
-        customerName,
-        customerPhone: normalizedCustomerPhone,
-        customerEmail,
-        notes,
-        total: total.toFixed(2),
-        restaurantId,
-        // Direct orders (no online checkout) are treated as paid in-store so
-        // they still surface to the kitchen alongside Stripe-paid orders.
-        paymentStatus: "PAID",
-        items: {
-          create: orderItems
-        }
-      },
-      include: {
-        items: true
-      }
+    const order = await db.createOrder({
+      customerName,
+      customerPhone: normalizedCustomerPhone,
+      customerEmail,
+      notes,
+      total: total.toFixed(2),
+      restaurantId,
+      // Direct orders (no online checkout) are treated as paid in-store so
+      // they still surface to the kitchen alongside Stripe-paid orders.
+      paymentStatus: "PAID",
+      items: orderItems
     });
 
     sendOrder(res, 201, order);
@@ -1169,7 +894,7 @@ router.post(
         return res.status(400).json({ error: "Restaurant id must be a number" });
       }
 
-      const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId } });
+      const restaurant = await db.getRestaurantById(restaurantId);
 
       if (!restaurant) {
         return res.status(404).json({ error: "Restaurant not found" });
@@ -1196,10 +921,7 @@ router.post(
         });
 
         accountId = account.id;
-        await prisma.restaurant.update({
-          where: { id: restaurantId },
-          data: { stripeAccountId: accountId }
-        });
+        await db.updateRestaurant(restaurantId, { stripeAccountId: accountId });
       }
 
       const clientBaseUrl = process.env.CLIENT_BASE_URL || "http://localhost:5173";
@@ -1231,7 +953,7 @@ router.get(
       }
 
       const restaurantId = Number(req.params.restaurantId);
-      const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId } });
+      const restaurant = await db.getRestaurantById(restaurantId);
 
       if (!restaurant) {
         return res.status(404).json({ error: "Restaurant not found" });
@@ -1287,7 +1009,7 @@ router.post("/api/restaurants/:restaurantId/checkout-session", async (req, res, 
       return res.status(400).json({ error: "Order must include at least one item" });
     }
 
-    const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId } });
+    const restaurant = await db.getRestaurantById(restaurantId);
 
     if (!restaurant) {
       return res.status(404).json({ error: "Restaurant not found" });
@@ -1313,20 +1035,15 @@ router.post("/api/restaurants/:restaurantId/checkout-session", async (req, res, 
       return res.status(400).json({ error: "Order total must be greater than zero" });
     }
 
-    const order = await prisma.order.create({
-      data: {
-        customerName,
-        customerPhone,
-        customerEmail,
-        notes,
-        total: total.toFixed(2),
-        restaurantId,
-        paymentStatus: "UNPAID",
-        items: {
-          create: orderItems
-        }
-      },
-      include: orderInclude()
+    const order = await db.createOrder({
+      customerName,
+      customerPhone,
+      customerEmail,
+      notes,
+      total: total.toFixed(2),
+      restaurantId,
+      paymentStatus: "UNPAID",
+      items: orderItems
     });
 
     const clientBaseUrl = process.env.CLIENT_BASE_URL || "http://localhost:5173";
@@ -1381,10 +1098,7 @@ router.post("/api/restaurants/:restaurantId/checkout-session", async (req, res, 
       ...(customerEmail ? { customer_email: customerEmail } : {})
     });
 
-    await prisma.order.update({
-      where: { id: order.id },
-      data: { stripeSessionId: session.id }
-    });
+    await db.updateOrder(order.id, { stripeSessionId: session.id });
 
     res.status(201).json({
       clientSecret: session.client_secret,
@@ -1420,7 +1134,7 @@ router.get("/api/checkout-session/:sessionId/status", async (req, res, next) => 
     const orderId = session.metadata?.orderId ? Number(session.metadata.orderId) : null;
 
     if (!order && orderId) {
-      order = await prisma.order.findUnique({ where: { id: orderId } });
+      order = await db.getOrder(orderId);
     }
 
     res.json({
@@ -1447,11 +1161,7 @@ router.get("/api/restaurants/:restaurantId/orders", requireRestaurantAccess("res
       });
     }
 
-    const restaurant = await prisma.restaurant.findUnique({
-      where: {
-        id: restaurantId
-      }
-    });
+    const restaurant = await db.getRestaurantById(restaurantId);
 
     if (!restaurant) {
       return res.status(404).json({
@@ -1459,15 +1169,7 @@ router.get("/api/restaurants/:restaurantId/orders", requireRestaurantAccess("res
       });
     }
 
-    const orders = await prisma.order.findMany({
-      where: {
-        restaurantId,
-      },
-      include: orderInclude(),
-      orderBy: {
-        createdAt: "desc"
-      }
-    });
+    const orders = await db.listOrdersForRestaurant(restaurantId);
 
     res.json(orders.map((order) => ({
       ...order,
@@ -1490,20 +1192,7 @@ router.get("/api/restaurants/:restaurantId/live-orders-info", requireRestaurantA
       });
     }
 
-    const restaurant = await prisma.restaurant.findUnique({
-      where: {
-        id: restaurantId
-      },
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        phone: true,
-        address: true,
-        websiteUrl: true,
-        themeColor: true
-      }
-    });
+    const restaurant = await db.getLiveOrdersInfo(restaurantId);
 
     if (!restaurant) {
       return res.status(404).json({
@@ -1536,22 +1225,16 @@ router.patch("/api/orders/:orderId/status", requireOrderAccess(), async (req, re
       });
     }
 
-    const order = await prisma.order.update({
-      where: {
-        id: orderId
-      },
-      data: {
-        status,
-        cancelledAt: status === "CANCELLED" ? new Date() : undefined,
-        acceptedAt: status === "ACCEPTED" ? new Date() : undefined,
-        printedAt: status === "ACCEPTED" ? null : undefined
-      },
-      include: orderInclude()
+    const order = await db.updateOrder(orderId, {
+      status,
+      cancelledAt: status === "CANCELLED" ? new Date() : undefined,
+      acceptedAt: status === "ACCEPTED" ? new Date() : undefined,
+      printedAt: status === "ACCEPTED" ? null : undefined
     });
 
     sendOrder(res, 200, order);
   } catch (err) {
-    if (err.code === "P2025") {
+    if (err.code === "NOT_FOUND") {
       return res.status(404).json({
         error: "Order not found"
       });
@@ -1573,7 +1256,7 @@ router.patch("/api/orders/:orderId/accept", requireOrderAccess(), async (req, re
       });
     }
 
-    const existingOrder = await prisma.order.findUnique({ where: { id: orderId } });
+    const existingOrder = await db.getOrder(orderId);
 
     if (!existingOrder) {
       return res.status(404).json({
@@ -1584,23 +1267,17 @@ router.patch("/api/orders/:orderId/accept", requireOrderAccess(), async (req, re
     // Capture the held authorization so the customer is charged on acceptance.
     const paymentStatus = await captureOrderPayment(existingOrder);
 
-    const order = await prisma.order.update({
-      where: {
-        id: orderId
-      },
-      data: {
-        status: "ACCEPTED",
-        acceptedAt: new Date(),
-        printedAt: null,
-        cancelledAt: null,
-        paymentStatus
-      },
-      include: orderInclude()
+    const order = await db.updateOrder(orderId, {
+      status: "ACCEPTED",
+      acceptedAt: new Date(),
+      printedAt: null,
+      cancelledAt: null,
+      paymentStatus
     });
 
     sendOrder(res, 200, order);
   } catch (err) {
-    if (err.code === "P2025") {
+    if (err.code === "NOT_FOUND") {
       return res.status(404).json({
         error: "Order not found"
       });
@@ -1622,7 +1299,7 @@ router.patch("/api/orders/:orderId/decline", requireOrderAccess(), async (req, r
       });
     }
 
-    const existingOrder = await prisma.order.findUnique({ where: { id: orderId } });
+    const existingOrder = await db.getOrder(orderId);
 
     if (!existingOrder) {
       return res.status(404).json({
@@ -1633,21 +1310,15 @@ router.patch("/api/orders/:orderId/decline", requireOrderAccess(), async (req, r
     // Void the held authorization so the customer is never charged.
     const paymentStatus = await voidOrderPayment(existingOrder);
 
-    const order = await prisma.order.update({
-      where: {
-        id: orderId
-      },
-      data: {
-        status: "CANCELLED",
-        cancelledAt: new Date(),
-        paymentStatus
-      },
-      include: orderInclude()
+    const order = await db.updateOrder(orderId, {
+      status: "CANCELLED",
+      cancelledAt: new Date(),
+      paymentStatus
     });
 
     sendOrder(res, 200, order);
   } catch (err) {
-    if (err.code === "P2025") {
+    if (err.code === "NOT_FOUND") {
       return res.status(404).json({
         error: "Order not found"
       });
@@ -1669,19 +1340,13 @@ router.patch("/api/orders/:orderId/printed", requireOrderAccess(), async (req, r
       });
     }
 
-    const order = await prisma.order.update({
-      where: {
-        id: orderId
-      },
-      data: {
-        printedAt: new Date()
-      },
-      include: orderInclude()
+    const order = await db.updateOrder(orderId, {
+      printedAt: new Date()
     });
 
     sendOrder(res, 200, order);
   } catch (err) {
-    if (err.code === "P2025") {
+    if (err.code === "NOT_FOUND") {
       return res.status(404).json({
         error: "Order not found"
       });
@@ -1703,18 +1368,7 @@ router.get("/api/print-agent/restaurants/:restaurantId/orders", requireRestauran
       });
     }
 
-    const orders = await prisma.order.findMany({
-      where: {
-        restaurantId,
-        status: "ACCEPTED",
-        printedAt: null,
-        paymentStatus: "PAID"
-      },
-      include: orderInclude(),
-      orderBy: {
-        acceptedAt: "asc"
-      }
-    });
+    const orders = await db.listPrintableOrders(restaurantId);
 
     res.json(orders.map((order) => ({
       ...order,
@@ -1738,12 +1392,7 @@ router.get("/restaurants/:restaurantId/categories/:categoryId/menu-items", requi
       });
     }
 
-    const category = await prisma.menuCategory.findFirst({
-      where: {
-        id: categoryId,
-        restaurantId
-      }
-    });
+    const category = await db.getCategoryForRestaurant(categoryId, restaurantId);
 
     if (!category) {
       return res.status(404).json({
@@ -1751,25 +1400,15 @@ router.get("/restaurants/:restaurantId/categories/:categoryId/menu-items", requi
       });
     }
 
-    const menuItems = await prisma.menuItem.findMany({
-      where: {
-        restaurantId,
-        categoryId
-      },
-      include: {
-        menuCategory: true,
-        modifierGroupLinks: {
-          include: {
-            modifierGroup: {
-              include: modifierGroupInclude()
-            }
-          }
-        }
-      },
-      orderBy: {
-        name: "asc"
-      }
-    });
+    const items = await db.listMenuItemsForRestaurant(restaurantId, { categoryId });
+    const menuItems = await Promise.all(
+      items.map(async (item) => ({
+        ...item,
+        // Every item here shares this category, so reuse it for the relation.
+        menuCategory: category,
+        modifierGroupLinks: await db.assembleModifierLinks(item.id)
+      }))
+    );
 
     res.json({
       category,
@@ -1799,11 +1438,7 @@ router.patch("/menu-items/:id", requirePlatformAdmin, async (req, res, next) => 
       });
     }
 
-    const existingMenuItem = await prisma.menuItem.findUnique({
-      where: {
-        id
-      }
-    });
+    const existingMenuItem = await db.getMenuItem(id);
 
     if (!existingMenuItem) {
       return res.status(404).json({
@@ -1814,12 +1449,7 @@ router.patch("/menu-items/:id", requirePlatformAdmin, async (req, res, next) => 
     const selectedCategoryId = categoryId ? Number(categoryId) : null;
 
     if (selectedCategoryId) {
-      const menuCategory = await prisma.menuCategory.findFirst({
-        where: {
-          id: selectedCategoryId,
-          restaurantId: existingMenuItem.restaurantId
-        }
-      });
+      const menuCategory = await db.getCategoryForRestaurant(selectedCategoryId, existingMenuItem.restaurantId);
 
       if (!menuCategory) {
         return res.status(400).json({
@@ -1828,27 +1458,19 @@ router.patch("/menu-items/:id", requirePlatformAdmin, async (req, res, next) => 
       }
     }
 
-    const menuItem = await prisma.menuItem.update({
-      where: {
-        id
-      },
-      data: {
-        name,
-        description,
-        imageUrl,
-        category,
-        categoryId: selectedCategoryId,
-        price,
-        isAvailable
-      },
-      include: {
-        menuCategory: true
-      }
+    const menuItem = await db.updateMenuItem(id, {
+      name,
+      description,
+      imageUrl,
+      category,
+      categoryId: selectedCategoryId,
+      price,
+      isAvailable
     });
 
     res.json(menuItem);
   } catch (err) {
-    if (err.code === "P2025") {
+    if (err.code === "NOT_FOUND") {
       return res.status(404).json({
         error: "Menu item not found"
       });
@@ -1877,25 +1499,20 @@ router.patch("/menu-categories/:id", requirePlatformAdmin, async (req, res, next
       });
     }
 
-    const category = await prisma.menuCategory.update({
-      where: {
-        id
-      },
-      data: {
-        name,
-        sortOrder: sortOrder === undefined ? 0 : Number(sortOrder)
-      }
+    const category = await db.updateCategory(id, {
+      name,
+      sortOrder: sortOrder === undefined ? 0 : Number(sortOrder)
     });
 
     res.json(category);
   } catch (err) {
-    if (err.code === "P2025") {
+    if (err.code === "NOT_FOUND") {
       return res.status(404).json({
         error: "Category not found"
       });
     }
 
-    if (err.code === "P2002") {
+    if (err.code === "UNIQUE") {
       return res.status(409).json({
         error: "That category already exists for this restaurant"
       });
@@ -1917,18 +1534,14 @@ router.delete("/menu-categories/:id", requirePlatformAdmin, async (req, res, nex
       });
     }
 
-    const category = await prisma.menuCategory.delete({
-      where: {
-        id
-      }
-    });
+    const category = await db.deleteCategory(id);
 
     res.json({
       message: "Category deleted",
       category
     });
   } catch (err) {
-    if (err.code === "P2025") {
+    if (err.code === "NOT_FOUND") {
       return res.status(404).json({
         error: "Category not found"
       });
@@ -1950,18 +1563,14 @@ router.delete("/menu-items/:id", requirePlatformAdmin, async (req, res, next) =>
       });
     }
 
-    const menuItem = await prisma.menuItem.delete({
-      where: {
-        id
-      }
-    });
+    const menuItem = await db.deleteMenuItem(id);
 
     res.json({
       message: "Menu item deleted",
       menuItem
     });
   } catch (err) {
-    if (err.code === "P2025") {
+    if (err.code === "NOT_FOUND") {
       return res.status(404).json({
         error: "Menu item not found"
       });
@@ -1977,24 +1586,7 @@ router.get("/public/restaurants/:slug", async (req, res, next) => {
   try {
     const { slug } = req.params;
 
-    const restaurant = await prisma.restaurant.findUnique({
-      where: {
-        slug
-      },
-      include: {
-        categories: {
-          orderBy: {
-            sortOrder: "asc"
-          }
-        },
-        menuItems: {
-          where: {
-            isAvailable: true
-          },
-          include: publicMenuItemInclude()
-        }
-      }
-    });
+    const restaurant = await db.getRestaurantBySlugWithPublicMenu(slug);
 
     if (!restaurant) {
       return res.status(404).json({

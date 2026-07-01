@@ -1,6 +1,6 @@
 const express = require("express");
 const VoiceResponse = require("twilio").twiml.VoiceResponse;
-const prisma = require("../prismaClient");
+const db = require("../db/repositories");
 const { parseVoiceOrder, loadItemModifiers } = require("../voiceParser");
 const { getState, setState, clearState } = require("../voiceState");
 const { detectIntent, hasPendingModifiers } = require("../voiceIntents");
@@ -34,15 +34,13 @@ router.post("/api/voice/incoming", async (req, res) => {
   // Look up restaurant by the Twilio number that was called.
   let restaurant = null;
   if (calledNumber) {
-    restaurant = await prisma.restaurant.findUnique({
-      where: { twilioPhoneNumber: calledNumber },
-    });
+    restaurant = await db.getRestaurantByTwilioNumber(calledNumber);
   }
 
   // Fall back to env var / default for backward compatibility (curl tests).
   if (!restaurant) {
     const fallbackId = Number(process.env.VOICE_RESTAURANT_ID) || 1;
-    restaurant = await prisma.restaurant.findUnique({ where: { id: fallbackId } });
+    restaurant = await db.getRestaurantById(fallbackId);
   }
 
   if (!restaurant) {
@@ -467,18 +465,16 @@ async function handleConfirmYes(state, callSid, callerPhone) {
     selectedModifiers: item.selectedModifiers,
   }));
 
-  const order = await prisma.order.create({
-    data: {
-      customerName: "Phone Customer",
-      customerPhone: normalizedPhone,
-      notes: `[Voice order] ${buildOrderSummary(state)}`,
-      source: "VOICE",
-      status: "PENDING",
-      paymentStatus: "UNPAID",
-      total: total.toFixed(2),
-      restaurantId: state.restaurantId,
-      items: { create: orderItems },
-    },
+  const order = await db.createOrder({
+    customerName: "Phone Customer",
+    customerPhone: normalizedPhone,
+    notes: `[Voice order] ${buildOrderSummary(state)}`,
+    source: "VOICE",
+    status: "PENDING",
+    paymentStatus: "UNPAID",
+    total: total.toFixed(2),
+    restaurantId: state.restaurantId,
+    items: orderItems,
   });
 
   console.log(`✅ Voice order #${order.id} created for restaurant ${state.restaurantId}`);
@@ -551,7 +547,7 @@ async function handleAskIngredients(state, speech, restaurantId) {
   if (!item) return "Which item would you like to know about?";
 
   // Check if the item has a description in the database.
-  const menuItem = await prisma.menuItem.findUnique({ where: { id: item.menuItemId } });
+  const menuItem = await db.getMenuItem(item.menuItemId);
   if (menuItem && menuItem.description) {
     return `${item.name}: ${menuItem.description}`;
   }
@@ -719,10 +715,7 @@ router.patch("/api/restaurants/:restaurantId/voice-settings", async (req, res) =
       data.handoffPhoneNumber = handoffPhoneNumber || null;
     }
 
-    const restaurant = await prisma.restaurant.update({
-      where: { id: restaurantId },
-      data,
-    });
+    const restaurant = await db.updateRestaurant(restaurantId, data);
 
     console.log(`⚙️ Voice settings updated for ${restaurant.name}: ${JSON.stringify(data)}`);
     res.json({
@@ -732,7 +725,7 @@ router.patch("/api/restaurants/:restaurantId/voice-settings", async (req, res) =
       handoffPhoneNumber: restaurant.handoffPhoneNumber,
     });
   } catch (err) {
-    if (err.code === "P2025") {
+    if (err.code === "NOT_FOUND") {
       return res.status(404).json({ error: "Restaurant not found" });
     }
     res.status(500).json({ error: "Failed to update voice settings" });

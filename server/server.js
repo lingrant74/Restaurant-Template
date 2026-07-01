@@ -2,7 +2,6 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
-const { Prisma } = require("@prisma/client");
 const cookieParser = require("cookie-parser");
 const { authRouter } = require("./auth");
 const { stripeWebhookHandler } = require("./payments");
@@ -77,18 +76,17 @@ app.use(voiceRoutes);
 app.use((err, req, res, next) => {
   console.error(err);
 
-  if (err instanceof Prisma.PrismaClientInitializationError) {
+  // DynamoDB connectivity problems surface as networking errors from the SDK.
+  if (err.name === "TimeoutError" || err.code === "ECONNREFUSED" || err.name === "UnrecognizedClientException") {
     return res.status(500).json({
-      error: "Database connection failed. Make sure PostgreSQL is running and DATABASE_URL in .env is correct."
+      error: "Database connection failed. Make sure DynamoDB is reachable and the AWS settings in .env are correct."
     });
   }
 
-  if (err instanceof Prisma.PrismaClientKnownRequestError) {
-    if (err.code === "P2021") {
-      return res.status(500).json({
-        error: "Database tables are missing. Run: npm run prisma:migrate -- --name init"
-      });
-    }
+  if (err.name === "ResourceNotFoundException") {
+    return res.status(500).json({
+      error: "Database tables are missing. Run: npm run db:create-tables"
+    });
   }
 
   res.status(500).json({
