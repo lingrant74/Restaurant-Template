@@ -36,6 +36,8 @@ const TABLES = {
   modifierOption: `${prefix}ModifierOption`,
   menuItemModifierGroup: `${prefix}MenuItemModifierGroup`,
   order: `${prefix}Order`,
+  printer: `${prefix}Printer`,
+  printerCategory: `${prefix}PrinterCategory`,
   counters: `${prefix}Counters`
 };
 
