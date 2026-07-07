@@ -13,6 +13,7 @@ import RestaurantUsersPage from "./pages/RestaurantUsersPage.jsx";
 import RestaurantPaymentsPage from "./pages/RestaurantPaymentsPage.jsx";
 import TabletLoginPage from "./pages/TabletLoginPage.jsx";
 import LandingPage from "./pages/LandingPage.jsx";
+import LegalPage from "./pages/LegalPage.jsx";
 import ProtectedAdminRoute from "./components/ProtectedAdminRoute.jsx";
 import ProtectedTabletRoute from "./components/ProtectedTabletRoute.jsx";
 import { AuthProvider } from "./auth.jsx";
@@ -42,6 +43,8 @@ export default function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<LandingPage />} />
+            <Route path="/terms" element={<LegalPage type="terms" />} />
+            <Route path="/privacy" element={<LegalPage type="privacy" />} />
             <Route path="/admin/login" element={<AdminLoginPage />} />
             <Route path="/tablet/login" element={<TabletLoginPage />} />
             <Route path="/admin" element={adminPage(<RestaurantsPage />)} />

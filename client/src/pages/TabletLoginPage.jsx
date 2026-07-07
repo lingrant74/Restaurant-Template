@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../auth.jsx";
 import AdminStatus from "../components/AdminStatus.jsx";
 import { getRestaurants } from "../api.js";
+import LegalFooter from "../components/LegalFooter.jsx";
 
 export default function TabletLoginPage() {
   const navigate = useNavigate();
@@ -42,36 +43,39 @@ export default function TabletLoginPage() {
 
   if (currentUser?.role === "PLATFORM_ADMIN") {
     return (
-      <main className="admin-login-page">
-        <section className="admin-login-card admin-login-card-wide">
-          <p className="eyebrow">Restaurant Tablet</p>
-          <h1>Choose Restaurant</h1>
-          <p>Open a restaurant order dashboard. This screen is only for accepting, printing, and completing orders.</p>
+      <>
+        <main className="admin-login-page">
+          <section className="admin-login-card admin-login-card-wide">
+            <p className="eyebrow">Restaurant Tablet</p>
+            <h1>Choose Restaurant</h1>
+            <p>Open a restaurant order dashboard. This screen is only for accepting, printing, and completing orders.</p>
 
-          {error && <p className="login-error">{error}</p>}
+            {error && <p className="login-error">{error}</p>}
 
-          {isLoadingRestaurants ? (
-            <p className="empty-message">Loading restaurants...</p>
-          ) : restaurants.length === 0 ? (
-            <p className="empty-message">No restaurants yet. Create one from the platform admin first.</p>
-          ) : (
-            <div className="tablet-restaurant-list">
-              {restaurants.map((restaurant) => (
-                <Link
-                  className="tablet-restaurant-card"
-                  key={restaurant.id}
-                  to={`/admin/restaurants/${restaurant.id}/live-orders`}
-                >
-                  <span>{restaurant.name}</span>
-                  <small>/{restaurant.slug}</small>
-                </Link>
-              ))}
-            </div>
-          )}
+            {isLoadingRestaurants ? (
+              <p className="empty-message">Loading restaurants...</p>
+            ) : restaurants.length === 0 ? (
+              <p className="empty-message">No restaurants yet. Create one from the platform admin first.</p>
+            ) : (
+              <div className="tablet-restaurant-list">
+                {restaurants.map((restaurant) => (
+                  <Link
+                    className="tablet-restaurant-card"
+                    key={restaurant.id}
+                    to={`/admin/restaurants/${restaurant.id}/live-orders`}
+                  >
+                    <span>{restaurant.name}</span>
+                    <small>/{restaurant.slug}</small>
+                  </Link>
+                ))}
+              </div>
+            )}
 
-          <Link className="secondary-login-link" to="/admin">Go to platform admin</Link>
-        </section>
-      </main>
+            <Link className="secondary-login-link" to="/admin">Go to platform admin</Link>
+          </section>
+        </main>
+        <LegalFooter variant="login" />
+      </>
     );
   }
 
@@ -102,26 +106,29 @@ export default function TabletLoginPage() {
   }
 
   return (
-    <main className="admin-login-page">
-      <section className="admin-login-card">
-        <p className="eyebrow">Restaurant Tablet</p>
-        <h1>Staff Login</h1>
-        <p>Use your approved restaurant Google account to open the live orders screen.</p>
+    <>
+      <main className="admin-login-page">
+        <section className="admin-login-card">
+          <p className="eyebrow">Restaurant Tablet</p>
+          <h1>Staff Login</h1>
+          <p>Use your approved restaurant Google account to open the live orders screen.</p>
 
-        {googleClientId ? (
-          <div className="google-login-shell">
-            <GoogleLogin
-              onSuccess={handleGoogleSuccess}
-              onError={() => setError("Google sign-in failed. Please try again.")}
-              useOneTap={false}
-            />
-          </div>
-        ) : (
-          <p className="login-error">Google sign-in is not configured. Add VITE_GOOGLE_CLIENT_ID to client/.env.</p>
-        )}
+          {googleClientId ? (
+            <div className="google-login-shell">
+              <GoogleLogin
+                onSuccess={handleGoogleSuccess}
+                onError={() => setError("Google sign-in failed. Please try again.")}
+                useOneTap={false}
+              />
+            </div>
+          ) : (
+            <p className="login-error">Google sign-in is not configured. Add VITE_GOOGLE_CLIENT_ID to client/.env.</p>
+          )}
 
-        {error && <p className="login-error">{error}</p>}
-      </section>
-    </main>
+          {error && <p className="login-error">{error}</p>}
+        </section>
+      </main>
+      <LegalFooter variant="login" />
+    </>
   );
 }
