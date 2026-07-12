@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { createOrder, getPublicRestaurant } from "../api.js";
 import { createAnchorId, formatPrice, getItemModifierGroups, getJapaneseCategoryLabel, groupMenuItems } from "../utils.js";
+import VoiceOrderButton from "../components/VoiceOrderButton.jsx";
 
 export default function PublicRestaurantPage() {
   const { slug } = useParams();
@@ -497,6 +498,8 @@ export default function PublicRestaurantPage() {
           previewModifiers={getSelectedModifierSnapshots(customizingItem)}
         />
       )}
+
+      <VoiceOrderButton restaurant={restaurant} />
     </main>
   );
 }

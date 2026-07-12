@@ -2822,3 +2822,53 @@ button {
     margin: 4px 0;
   }
 }
+
+/* Floating voice-ordering button (Vapi web SDK). */
+.voice-order-button {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 22px;
+  border: none;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 1rem;
+  color: #fff;
+  background: color-mix(in srgb, var(--theme-color, #d62828), #111 12%);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.voice-order-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
+}
+
+.voice-order-button:disabled {
+  opacity: 0.75;
+  cursor: default;
+}
+
+.voice-order-button.is-active {
+  background: #b3261e;
+  animation: voice-order-pulse 1.6s ease-in-out infinite;
+}
+
+.voice-order-icon {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+@keyframes voice-order-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(179, 38, 30, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(179, 38, 30, 0);
+  }
+}
