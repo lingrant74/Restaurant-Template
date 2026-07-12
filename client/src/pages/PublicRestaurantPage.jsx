@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { createOrder, getPublicRestaurant } from "../api.js";
+import LegalFooter from "../components/LegalFooter.jsx";
 import { createAnchorId, formatPrice, getItemModifierGroups, getJapaneseCategoryLabel, groupMenuItems } from "../utils.js";
 import VoiceOrderButton from "../components/VoiceOrderButton.jsx";
 
@@ -498,6 +499,8 @@ export default function PublicRestaurantPage() {
           previewModifiers={getSelectedModifierSnapshots(customizingItem)}
         />
       )}
+
+      <LegalFooter variant="public" />
 
       <VoiceOrderButton restaurant={restaurant} />
     </main>

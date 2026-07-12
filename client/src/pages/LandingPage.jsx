@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import LegalFooter from "../components/LegalFooter.jsx";
 
 export default function LandingPage() {
   return (
@@ -150,6 +151,8 @@ export default function LandingPage() {
         </div>
         <p>Phone order automation for restaurants.</p>
       </footer>
+
+      <LegalFooter variant="landing" />
     </main>
   );
 }

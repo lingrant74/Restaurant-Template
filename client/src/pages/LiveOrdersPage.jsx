@@ -19,6 +19,24 @@ function playAlertTone(audioContext) {
   oscillator.stop(audioContext.currentTime + 0.28);
 }
 
+function areNumberArraysEqual(firstArray, secondArray) {
+  return firstArray.length === secondArray.length && firstArray.every((value, index) => value === secondArray[index]);
+}
+
+function getOrderListSignature(orders) {
+  return orders.map((order) => (
+    [
+      order.id,
+      order.status,
+      order.updatedAt,
+      order.printedAt || "",
+      order.acceptedAt || "",
+      order.cancelledAt || "",
+      order.items?.length || 0
+    ].join(":")
+  )).join("|");
+}
+
 export default function LiveOrdersPage() {
   const { restaurantId } = useParams();
   const { currentUser, logout } = useAuth();
@@ -36,6 +54,8 @@ export default function LiveOrdersPage() {
   const [viewedPendingOrderIds, setViewedPendingOrderIds] = useState([]);
   const [selectedOrderId, setSelectedOrderId] = useState(null);
   const audioContextRef = useRef(null);
+  const restaurantLoadedRef = useRef(false);
+  const orderListSignatureRef = useRef("");
 
   const pendingOrders = orders.filter((order) => order.status === "PENDING");
   const acceptedOrders = orders.filter((order) => order.status === "ACCEPTED");
@@ -87,15 +107,31 @@ export default function LiveOrdersPage() {
       }
 
       setError("");
+      const shouldLoadRestaurant = !restaurantLoadedRef.current;
       const [restaurantData, orderData] = await Promise.all([
-        getLiveOrdersRestaurant(restaurantId),
+        shouldLoadRestaurant ? getLiveOrdersRestaurant(restaurantId) : Promise.resolve(null),
         getOrders(restaurantId)
       ]);
       const pendingIds = new Set(orderData.filter((order) => order.status === "PENDING").map((order) => order.id));
-      setHighlightedOrderIds([...pendingIds]);
+      const nextHighlightedOrderIds = [...pendingIds];
 
-      setRestaurant(restaurantData);
-      setOrders(orderData);
+      setHighlightedOrderIds((currentIds) => (
+        areNumberArraysEqual(currentIds, nextHighlightedOrderIds) ? currentIds : nextHighlightedOrderIds
+      ));
+
+      if (restaurantData) {
+        restaurantLoadedRef.current = true;
+        setRestaurant((currentRestaurant) => (
+          JSON.stringify(currentRestaurant) === JSON.stringify(restaurantData) ? currentRestaurant : restaurantData
+        ));
+      }
+
+      const nextOrderListSignature = getOrderListSignature(orderData);
+
+      if (orderListSignatureRef.current !== nextOrderListSignature) {
+        orderListSignatureRef.current = nextOrderListSignature;
+        setOrders(orderData);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -104,6 +140,8 @@ export default function LiveOrdersPage() {
   }
 
   useEffect(() => {
+    restaurantLoadedRef.current = false;
+    orderListSignatureRef.current = "";
     loadLiveOrders();
     const intervalId = window.setInterval(() => loadLiveOrders({ quiet: true }), 3000);
 

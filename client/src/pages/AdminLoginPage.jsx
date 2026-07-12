@@ -3,6 +3,7 @@ import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { useAuth } from "../auth.jsx";
 import AdminStatus from "../components/AdminStatus.jsx";
+import LegalFooter from "../components/LegalFooter.jsx";
 
 export default function AdminLoginPage() {
   const navigate = useNavigate();
@@ -51,26 +52,29 @@ export default function AdminLoginPage() {
   }
 
   return (
-    <main className="admin-login-page">
-      <section className="admin-login-card">
-        <p className="eyebrow">Restaurant Platform</p>
-        <h1>Admin Sign In</h1>
-        <p>Use an approved Google account to manage restaurants, menus, and orders.</p>
+    <>
+      <main className="admin-login-page">
+        <section className="admin-login-card">
+          <p className="eyebrow">Restaurant Platform</p>
+          <h1>Admin Sign In</h1>
+          <p>Use an approved Google account to manage restaurants, menus, and orders.</p>
 
-        {googleClientId ? (
-          <div className="google-login-shell">
-            <GoogleLogin
-              onSuccess={handleGoogleSuccess}
-              onError={() => setError("Google sign-in failed. Please try again.")}
-              useOneTap={false}
-            />
-          </div>
-        ) : (
-          <p className="login-error">Google sign-in is not configured. Add VITE_GOOGLE_CLIENT_ID to client/.env.</p>
-        )}
+          {googleClientId ? (
+            <div className="google-login-shell">
+              <GoogleLogin
+                onSuccess={handleGoogleSuccess}
+                onError={() => setError("Google sign-in failed. Please try again.")}
+                useOneTap={false}
+              />
+            </div>
+          ) : (
+            <p className="login-error">Google sign-in is not configured. Add VITE_GOOGLE_CLIENT_ID to client/.env.</p>
+          )}
 
-        {error && <p className="login-error">{error}</p>}
-      </section>
-    </main>
+          {error && <p className="login-error">{error}</p>}
+        </section>
+      </main>
+      <LegalFooter variant="login" />
+    </>
   );
 }
