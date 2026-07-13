@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="@raw/gts_root_r4" />
+            <certificates src="@raw/render_google_we1" />
+            <certificates src="@raw/render_gts_r4_cross" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

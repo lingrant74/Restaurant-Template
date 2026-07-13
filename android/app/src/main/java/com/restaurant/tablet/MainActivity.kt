@@ -199,7 +199,7 @@ private fun RestaurantTabletApp() {
             statusMessage = if (quiet) statusMessage else "Orders updated."
             errorMessage = ""
         } catch (err: Exception) {
-            errorMessage = "Could not load orders: ${err.message}"
+            errorMessage = "Could not load orders: ${friendlyError(err)}"
         }
     }
 
@@ -931,6 +931,16 @@ private fun MessageBlock(statusMessage: String, errorMessage: String, modifier: 
             Text(errorMessage, color = Danger, fontWeight = FontWeight.Bold)
         }
     }
+}
+
+private fun friendlyError(error: Throwable): String {
+    val messages = generateSequence(error) { it.cause }
+        .mapNotNull { it.message }
+        .filter { it.isNotBlank() }
+        .distinct()
+        .toList()
+
+    return messages.joinToString(" -> ").ifBlank { error::class.java.simpleName }
 }
 
 private class SettingsStore(context: Context) {

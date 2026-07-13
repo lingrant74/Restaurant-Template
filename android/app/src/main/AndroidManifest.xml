@@ -5,6 +5,7 @@
     <application
         android:allowBackup="true"
         android:label="Restaurant Orders"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true">
         <activity
