@@ -84,10 +84,14 @@ function hasTabletAgentAccess(req, restaurantId) {
   return getRestaurantTabletTokens().some((entry) => entry.restaurantId === restaurantId && entry.token === token);
 }
 
+function isCrossSiteCookieEnabled() {
+  return process.env.NODE_ENV === "production" && Boolean(process.env.FRONTEND_URL || process.env.CORS_ORIGINS);
+}
+
 function buildCookieOptions() {
   return {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: isCrossSiteCookieEnabled() ? "none" : "lax",
     secure: process.env.NODE_ENV === "production"
   };
 }
@@ -95,7 +99,7 @@ function buildCookieOptions() {
 function buildClearCookieOptions() {
   return {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: isCrossSiteCookieEnabled() ? "none" : "lax",
     secure: process.env.NODE_ENV === "production"
   };
 }

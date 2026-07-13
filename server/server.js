@@ -12,12 +12,25 @@ const printerRoutes = require("./routes/printers");
 
 const app = express();
 const port = process.env.PORT || 3000;
+const allowedOrigins = (process.env.FRONTEND_URL || process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 // The Stripe webhook must read the raw request body to verify the signature, so
 // it is registered with express.raw BEFORE express.json parses bodies globally.
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);
 
-app.use(cors());
+app.use(cors({
+  credentials: true,
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`Origin ${origin} is not allowed by CORS`));
+  }
+}));
 app.use(express.json());
 app.use(cookieParser());
 
