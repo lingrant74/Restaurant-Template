@@ -9,6 +9,11 @@ const { detectCallType } = require("../callClassifier");
 const router = express.Router();
 
 router.use(express.urlencoded({ extended: false }));
+router.use((req, res, next) => {
+  // Empty test requests may not have a parsed body. Keep voice routes safe.
+  req.body = req.body || {};
+  next();
+});
 
 // GET /health
 router.get("/health", (req, res) => {
@@ -19,9 +24,11 @@ router.get("/health", (req, res) => {
 // Listens briefly for automated systems before greeting. If the caller is
 // silent (a human waiting), falls through to the normal greeting.
 router.post("/api/voice/incoming", async (req, res) => {
-  const callerPhone = req.body.From || "unknown";
-  const calledNumber = req.body.To || "";
-  const callSid = req.body.CallSid || "unknown";
+  const {
+    From: callerPhone = "unknown",
+    To: calledNumber = "",
+    CallSid: callSid = "unknown",
+  } = req.body;
 
   console.log("───────────────────────────────────────");
   console.log("📞 Incoming call:");

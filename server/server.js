@@ -31,6 +31,8 @@ app.use(cors({
     return callback(new Error(`Origin ${origin} is not allowed by CORS`));
   }
 }));
+// Twilio sends voice webhook fields as application/x-www-form-urlencoded.
+app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 app.use(cookieParser());
 
@@ -91,7 +93,7 @@ app.use(printerRoutes);
 
 // Keep errors readable while this project is still small.
 app.use((err, req, res, next) => {
-  console.error(err);
+  console.error("Unhandled server error:", err);
 
   // DynamoDB connectivity problems surface as networking errors from the SDK.
   if (err.name === "TimeoutError" || err.code === "ECONNREFUSED" || err.name === "UnrecognizedClientException") {
