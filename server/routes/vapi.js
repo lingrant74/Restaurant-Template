@@ -1,6 +1,7 @@
 const express = require("express");
 const db = require("../db/repositories");
 const { printOrder } = require("../printService");
+const { parseOrderRequest, buildVapiSuccess, buildVapiError } = require("../vapiProtocol");
 
 const router = express.Router();
 
@@ -11,6 +12,12 @@ router.post("/api/vapi/order", async (req, res) => {
   console.log("📞 Vapi order received:");
   console.log(JSON.stringify(req.body, null, 2));
 
+  const parsedRequest = parseOrderRequest(req.body);
+
+  if (parsedRequest.isVapiToolCall && !parsedRequest.toolCallId) {
+    return res.status(400).json({ error: "Vapi tool call id is required" });
+  }
+
   try {
     const {
       customerPhone,
@@ -18,10 +25,11 @@ router.post("/api/vapi/order", async (req, res) => {
       items,
       notes,
       restaurantId: bodyRestaurantId,
-    } = req.body;
+      transcript,
+    } = parsedRequest.orderPayload;
 
-    const restaurantId = bodyRestaurantId || Number(process.env.VOICE_RESTAURANT_ID) || 1;
-    const normalizedPhone = (customerPhone || "unknown").replace(/\D/g, "").slice(-10);
+    const restaurantId = Number(bodyRestaurantId) || Number(process.env.VOICE_RESTAURANT_ID) || 1;
+    const normalizedPhone = String(customerPhone || "unknown").replace(/\D/g, "").slice(-10);
 
     // Build order items from the Vapi payload.
     let orderItems = [];
@@ -29,9 +37,10 @@ router.post("/api/vapi/order", async (req, res) => {
 
     if (Array.isArray(items) && items.length > 0) {
       for (const item of items) {
-        const quantity = item.quantity || 1;
+        const quantity = Number(item.quantity) || 1;
         const price = Number(item.price) || 0;
-        const finalPrice = price + (item.modifiers || []).reduce((sum, m) => sum + (Number(m.priceDelta) || 0), 0);
+        const modifiers = Array.isArray(item.modifiers) ? item.modifiers : [];
+        const finalPrice = price + modifiers.reduce((sum, m) => sum + (Number(m.priceDelta) || 0), 0);
 
         orderItems.push({
           name: item.name || "Unknown item",
@@ -41,7 +50,7 @@ router.post("/api/vapi/order", async (req, res) => {
           finalPrice,
           menuItemId: item.menuItemId || null,
           customerComment: item.notes || item.comment || null,
-          selectedModifiers: (item.modifiers || []).map((m) => ({
+          selectedModifiers: modifiers.map((m) => ({
             groupId: m.groupId || null,
             groupName: m.groupName || m.group || "",
             optionId: m.optionId || null,
@@ -60,14 +69,14 @@ router.post("/api/vapi/order", async (req, res) => {
         price: 0,
         basePrice: 0,
         finalPrice: 0,
-        customerComment: notes || req.body.transcript || null,
+        customerComment: notes || transcript || null,
       });
     }
 
     const order = await db.createOrder({
       customerName: customerName || "Phone Customer",
       customerPhone: normalizedPhone,
-      notes: notes || req.body.transcript || null,
+      notes: notes || transcript || null,
       source: "VOICE",
       status: "PENDING",
       paymentStatus: "UNPAID",
@@ -94,10 +103,23 @@ router.post("/api/vapi/order", async (req, res) => {
 
     console.log("───────────────────────────────────────");
 
-    res.json({ success: true, orderId: order.id, printed: printResults });
+    const result = { success: true, orderId: order.id, printed: printResults };
+
+    if (parsedRequest.isVapiToolCall) {
+      return res.json(buildVapiSuccess(parsedRequest.toolCallId, result));
+    }
+
+    return res.json(result);
   } catch (err) {
     console.error("❌ Failed to create Vapi order:", err);
-    res.status(500).json({ success: false, error: "Failed to create order" });
+
+    // Vapi expects HTTP 200 for tool execution errors and reads the error from
+    // the matching result entry. Legacy/direct callers keep the normal 500.
+    if (parsedRequest.isVapiToolCall) {
+      return res.json(buildVapiError(parsedRequest.toolCallId, "Failed to create order"));
+    }
+
+    return res.status(500).json({ success: false, error: "Failed to create order" });
   }
 });
 

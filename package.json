@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "nodemon server/server.js",
     "start": "node server/server.js",
+    "test": "node --test",
     "db:create-tables": "node scripts/create-tables.js",
     "db:seed": "node scripts/seed.js"
   },
